@@ -228,7 +228,9 @@ async function api(path, body) {
   const r = await fetch(API + path, opt);
   let data = {};
   try { data = await r.json(); } catch (e) { /* non-JSON */ }
-  if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+  // the HTTP status in the message lets load() recognise a 401 (stale console
+  // token) and re-prompt instead of erroring forever with the old token
+  if (!r.ok) throw new Error("HTTP " + r.status + ": " + ((data && data.error) || r.statusText || "error"));
   return data;
 }
 
