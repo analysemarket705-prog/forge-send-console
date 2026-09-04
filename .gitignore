@@ -1,0 +1,6 @@
+.vercel
+.env*
+
+node_modules/
+serve.log
+smtp.log

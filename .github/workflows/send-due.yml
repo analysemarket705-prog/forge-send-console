@@ -1,0 +1,50 @@
+# Forge send console — the batch scheduler.
+#
+# Locking a review (/api/lock) leaves the batch in the KV with no timer of
+# its own; THIS workflow is the calendar. Every 5 min it ticks
+# /api/senddue, which relays AT MOST ONE queued email per tick to
+# /api/batchsend (SMTP on Vercel) — so locked emails go out one every
+# 5-10 min, durably, no browser tab needed. A tick with nothing due is a
+# cheap no-op; a stalled cron self-heals on the next tick.
+#
+# Needs two repo settings:
+#   - variable FORGE_CONSOLE_URL   (e.g. https://forge-send-console.vercel.app)
+#   - secret    FORGE_CONSOLE_TOKEN (must match the Vercel secret of the same
+#             name — the console's API gate)
+# The SMTP credentials never leave the Vercel secrets.
+#
+# Run it manually anytime with the "Run workflow" button (or
+# `gh workflow run send-due.yml`) — e.g. right after a lock, to send the
+# first email without waiting for the next scheduled tick.
+
+name: forge-send-due
+
+on:
+  schedule:
+    # every 5 min, starting at minute 2 (cron alignment hygiene)
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tick the locked batch
+        env:
+          CONSOLE_URL: ${{ vars.FORGE_CONSOLE_URL }}
+          CONSOLE_TOKEN: ${{ secrets.FORGE_CONSOLE_TOKEN }}
+        run: |
+          if [ -z "$CONSOLE_URL" ] || [ -z "$CONSOLE_TOKEN" ]; then
+            echo "::error::FORGE_CONSOLE_URL (variable) and FORGE_CONSOLE_TOKEN (secret) must be set on the repo"
+            exit 1
+          fi
+          curl -sS -o /tmp/senddue.out -w "HTTP %{http_code}\n" \
+            -X POST "$CONSOLE_URL/api/senddue" \
+            -H "x-forge-token: $CONSOLE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 60
+          cat /tmp/senddue.out

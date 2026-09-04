@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forge — Console d'envoi</title>
+<style>
+  :root {
+    --ink: #14140f; --muted: #6b6b60; --line: #e3e3da; --bg: #f4f4ef;
+    --red: #e8391c; --ok: #1d7a3e; --warn: #8a5a00; --stop: #b3261e;
+    --chip-ok: #e2f3e7; --chip-warn: #fdf0d5; --chip-stop: #fde5e3;
+    --chip-blue: #e4edf7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  header { position: sticky; top: 0; z-index: 5; background: #14140f; color: #fff;
+           padding: 12px 16px; display: flex; gap: 12px; align-items: center; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header h1 span { color: var(--red); }
+  header .spacer { flex: 1; }
+  header button, header .pill { font: inherit; font-size: 13px; }
+  header .pill { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+                 padding: 4px 10px; border-radius: 99px; color: #eee; }
+  header .pill.err { background: rgba(227,57,28,.25); border-color: var(--red); color: #ffb4a3; }
+  button { cursor: pointer; border-radius: 8px; border: 1px solid transparent; }
+  .ghost { background: #fff; border-color: var(--line); color: var(--ink); padding: 7px 12px; }
+  .ghost:hover { border-color: #c9c9bd; }
+  button:disabled { cursor: not-allowed; }
+  main { max-width: 880px; margin: 0 auto; padding: 18px 14px 80px; }
+  .summary { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .summary .chip { background: #fff; border: 1px solid var(--line); border-radius: 99px;
+                   padding: 4px 12px; font-size: 13px; }
+  .summary .chip b { font-weight: 650; }
+  .summary .chip.hot { border-color: var(--red); color: var(--red); }
+  /* review / batch bars */
+  .bar { background: #fff; border: 1px solid var(--line); border-radius: 12px;
+         padding: 10px 14px; margin: 0 0 12px; display: flex; gap: 10px;
+         flex-wrap: wrap; align-items: center; font-size: 14px; }
+  .bar .grow { flex: 1; min-width: 220px; }
+  .bar .note { font-size: 12.5px; color: var(--muted); }
+  .bar.batch { border-color: #b8cbe0; background: #f7fafd; }
+  .bar .n { font-weight: 700; }
+  .btn { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 9px; }
+  .btn.lock { background: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .btn.lock:hover:not(:disabled) { background: #cf2f14; }
+  .btn.lock:disabled { background: #d8d8cf; color: #8f8f85; }
+  .btn.ghost2 { background: #fff; border: 1px solid var(--line); color: var(--ink); }
+  .btn.ghost2:hover:not(:disabled) { border-color: #c9c9bd; }
+  .btn.ghost2:disabled { opacity: .55; }
+  .mini-prog { display: flex; flex-direction: column; gap: 3px; width: 100%; margin-top: 6px; }
+  .mini-prog .row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .mini-prog .u { font-weight: 600; min-width: 130px; }
+  .mini-prog .st.ok { color: var(--ok); }
+  .mini-prog .st.wait { color: var(--muted); }
+  .mini-prog .st.bad { color: var(--stop); font-weight: 600; }
+  .hint { font-size: 13px; color: var(--muted); margin: 0 0 18px; }
+  .hint code { background: #eceae3; padding: 1px 6px; border-radius: 5px;
+               font: 12px ui-monospace, Menlo, Consolas, monospace; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 12px;
+          margin: 14px 0; overflow: hidden; }
+  .card.decided { opacity: .62; }
+  .card.decided .actions, .card.locked .actions { display: none; }
+  .card-top { display: flex; gap: 10px; padding: 14px 16px 0; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; flex: none;
+            background: linear-gradient(135deg, var(--red), #ff8a3d);
+            color: #fff; font-weight: 700; display: flex; align-items: center;
+            justify-content: center; font-size: 18px; }
+  .who { min-width: 0; }
+  .who .to { font-weight: 700; font-size: 15px; word-break: break-word; }
+  .who .to .at { color: var(--muted); font-weight: 400; }
+  .who .stats { font-size: 13px; color: var(--muted); margin-top: 2px; }
+  .meta { margin-left: auto; text-align: right; font-size: 12px; color: var(--muted);
+          white-space: nowrap; }
+  .meta a { color: var(--red); text-decoration: none; }
+  .inner { padding: 10px 16px 16px; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+  .badge { font-size: 12px; border-radius: 6px; padding: 2px 8px; }
+  .badge.src { background: #eee; color: #555; }
+  .badge.o  { background: var(--chip-ok);  color: var(--ok); }
+  .badge.w  { background: var(--chip-warn); color: var(--warn); }
+  .badge.s  { background: var(--chip-stop); color: var(--stop); }
+  .badge.b  { background: var(--chip-blue); color: #1e4f80; }
+  .stag { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 3px 10px; }
+  .stag.appr { background: var(--chip-ok); color: var(--ok); }
+  .stag.rej { background: var(--chip-warn); color: var(--warn); }
+  .bio { font-size: 13.5px; color: #3d3d35; margin: 0 0 4px; }
+  .bio b { color: var(--ink); font-weight: 600; }
+  .subject { font-size: 18px; margin: 12px 0 6px; font-weight: 700; }
+  .body { white-space: pre-wrap; font-size: 14.5px; line-height: 1.55;
+          color: #23231d; background: #fafaf6; border: 1px solid var(--line);
+          border-radius: 10px; padding: 12px 14px; margin: 8px 0; }
+  .mock { margin: 10px 0 4px; }
+  .mock .cap { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .mock img { max-width: 100%; border: 1px solid var(--line); border-radius: 10px; display: block; }
+  .mock .none { font-size: 13px; color: var(--muted); font-style: italic; }
+  details { margin-top: 10px; font-size: 13px; }
+  details summary { cursor: pointer; color: var(--muted); }
+  details ul { margin: 8px 0 0; padding-left: 20px; color: #3d3d35; }
+  .checks { margin-top: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+  .checks .line { padding: 3px 8px; border-radius: 6px; }
+  .checks .line.o { color: var(--ok); }
+  .checks .line.w { background: var(--chip-warn); color: var(--warn); }
+  .checks .line.s { background: var(--chip-stop); color: var(--stop); }
+  .checks b { font-weight: 700; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 16px 14px;
+             border-top: 1px dashed var(--line); }
+  .actions .btn { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 9px; }
+  .btn.reject { background: #fff; border: 1px solid var(--line); color: var(--ink); }
+  .btn.reject:hover:not(:disabled) { border-color: var(--stop); color: var(--stop); }
+  .btn.reject.on { background: var(--chip-warn); border-color: var(--warn); color: var(--warn); }
+  .btn.edit { background: #fff; border: 1px solid var(--line); color: #3a3a30; }
+  .btn.edit:hover:not(:disabled) { border-color: #b98a2e; color: #8a5a00; }
+  .btn.approve { background: var(--chip-ok); border: 1px solid #9dc8aa; color: var(--ok); }
+  .btn.approve:hover:not(:disabled) { border-color: var(--ok); }
+  .btn.approve.off { background: #fff; border: 1px solid var(--line); color: var(--ok); }
+  .btn.approve.off:hover { border-color: var(--ok); }
+  .decision-tag { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 99px;
+                  margin-top: 8px; display: inline-block; }
+  .decision-tag.sent { background: var(--chip-ok); color: var(--ok); }
+  .decision-tag.rejected_manual { background: var(--chip-warn); color: var(--warn); }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .empty .big { font-size: 42px; }
+  /* modal */
+  .modal-back { position: fixed; inset: 0; background: rgba(20,20,15,.55); z-index: 20;
+                display: none; align-items: center; justify-content: center; padding: 18px; }
+  .modal-back.on { display: flex; }
+  .modal { background: #fff; border-radius: 14px; max-width: 620px; width: 100%;
+           padding: 20px; max-height: 90vh; overflow: auto; }
+  .modal h2 { margin: 0 0 6px; font-size: 16px; }
+  .modal p { margin: 6px 0; font-size: 14px; color: #44443a; }
+  .modal input[type=text], .modal textarea { width: 100%; font: inherit; padding: 10px;
+                 border: 1.5px solid var(--line); border-radius: 9px; margin: 6px 0 4px; }
+  .modal input.ok { border-color: var(--ok); }
+  .modal input.bad { border-color: var(--stop); }
+  .modal .msgs { margin: 4px 0; font-size: 13px; }
+  .modal .msgs .err { color: var(--stop); white-space: pre-wrap; }
+  .modal .msgs .info { color: var(--ok); }
+  .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .modal .btn { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 9px; }
+  .locklist { border: 1px solid var(--line); border-radius: 10px; max-height: 220px;
+              overflow: auto; margin: 8px 0 4px; font-size: 13px; }
+  .locklist .l { display: flex; gap: 8px; padding: 7px 10px; border-bottom: 1px dashed var(--line); }
+  .locklist .l:last-child { border-bottom: none; }
+  .locklist .who2 { font-weight: 600; min-width: 150px; word-break: break-word; }
+  .locklist .what { color: #3d3d35; min-width: 0; }
+  .locklist .when2 { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 12px; }
+  .busy { opacity: .55; pointer-events: none; }
+  .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+           background: #14140f; color: #fff; padding: 10px 16px; border-radius: 10px;
+           font-size: 14px; z-index: 30; display: none; max-width: 90vw; }
+  .toast.err { background: var(--stop); }
+  .toast.ok { background: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Forge <span>—</span> Console d'envoi</h1>
+  <div class="spacer"></div>
+  <button class="ghost" id="refreshBtn" style="background:transparent;border-color:rgba(255,255,255,.35);color:#fff;">↻ actualiser</button>
+</header>
+
+<main>
+  <div id="tokenBox" style="display:none;">
+    <div class="card"><div class="inner">
+      <p><b>Clé de la console</b> — cette page contient les brouillons d'emails et les adresses des prospects : elle est protégée par le jeton <code>FORGE_CONSOLE_TOKEN</code>.</p>
+      <label>Jeton :</label>
+      <input type="text" id="tokenInput" style="width:100%;font:inherit;padding:10px;border:1.5px solid var(--line);border-radius:9px;margin:8px 0;">
+      <div class="actions" style="border-top:none;padding:0;justify-content:flex-start;">
+        <button class="btn lock" id="tokenGo">Ouvrir la console</button>
+      </div>
+    </div></div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <div class="summary" id="summary"></div>
+    <div id="bars"></div>
+    <p class="hint" id="hint"></p>
+    <div id="decided"></div>
+    <div id="queue"></div>
+  </div>
+</main>
+
+<!-- lock modal (the single human gate for the whole batch) -->
+<div class="modal-back" id="lockModalBack">
+  <div class="modal">
+    <h2 id="lockTitle">Verrouiller le lot d'envoi</h2>
+    <div id="lockBody"></div>
+    <input type="text" id="lockPhrase" autocomplete="off" autocapitalize="off" spellcheck="false"
+           placeholder="ENVOYER 3">
+    <div class="msgs" id="lockMsgs"></div>
+    <div class="row">
+      <button class="ghost2 btn" data-close>Annuler</button>
+      <button class="btn lock" id="lockGo" disabled>Verrouiller le lot</button>
+    </div>
+  </div>
+</div>
+
+<!-- revise modal (Modifier — réécriture par l'agent writer) -->
+<div class="modal-back" id="revModalBack">
+  <div class="modal">
+    <h2 id="revTitle">Modifier l'email</h2>
+    <p>Un rédacteur (variante de l'agent writer Forge) <b>réécrit le sujet et le corps</b> selon votre instruction, en gardant le fond et les faits du brouillon. Le résultat remplace ce texte sur la carte — <b>c'est ce texte exact qui partira</b> au verrouillage du lot.</p>
+    <textarea id="revInstr" rows="4" placeholder="Ex. : raccourcis le début, parle plus de l'offre à 0$ upfront, dis que l'app est prête en quelques semaines, mets moins de questions…"></textarea>
+    <div class="msgs" id="revMsgs"></div>
+    <div class="row">
+      <button class="ghost2 btn" data-close>Annuler</button>
+      <button class="btn edit" id="revGo" style="font-weight:600;padding:9px 16px;">Réécrire l'email</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const API = "";
+let TOKEN = sessionStorage.getItem("forgeConsoleToken") || "";
+let state = { queue: [], decisions: [], staged: [], batch: null };
+
+async function api(path, body) {
+  const opt = { method: body === undefined ? "GET" : "POST", headers: { "x-forge-token": TOKEN } };
+  if (body !== undefined) {
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(API + path, opt);
+  let data = {};
+  try { data = await r.json(); } catch (e) { /* non-JSON */ }
+  if (!r.ok) throw new Error((data && data.error) || ("HTTP " + r.status));
+  return data;
+}
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function when(secs) {
+  if (!secs) return "";
+  const d = new Date(secs);
+  return isNaN(d) ? secs : d.toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+function hhmm(secs) {
+  const d = new Date(secs);
+  return isNaN(d) ? "" : d.toLocaleString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+function toast(msg, cls) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "toast " + (cls || "");
+  t.style.display = "block";
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => (t.style.display = "none"), cls === "err" ? 6000 : 4000);
+}
+
+/* ---------- token gate ---------- */
+function initToken() {
+  if (TOKEN) { $("app").style.display = ""; $("tokenBox").style.display = "none"; load(); return; }
+  $("app").style.display = "none"; $("tokenBox").style.display = "";
+  $("tokenInput").focus();
+  $("tokenGo").onclick = () => {
+    const t = $("tokenInput").value.trim();
+    if (!t) return;
+    TOKEN = t;
+    sessionStorage.setItem("forgeConsoleToken", t);
+    api("/api/session").then(() => initToken()).catch((e) => toast("Jeton refusé : " + e.message, "err"));
+  };
+}
+
+/* ---------- load + render ---------- */
+async function load() {
+  $("app").classList.add("busy");
+  try {
+    state = await api("/api/session");
+    render();
+  } catch (e) {
+    if (String(e.message).includes("401")) {
+      sessionStorage.removeItem("forgeConsoleToken");
+      TOKEN = "";
+      initToken();
+    } else toast("Erreur : " + e.message, "err");
+  } finally {
+    $("app").classList.remove("busy");
+  }
+}
+
+function derive() {
+  const { queue, decisions, staged, batch } = state;
+  const dec = new Map(decisions.map((d) => [d.username, d]));
+  const stg = new Map(staged.map((s) => [s.username, s]));
+  const bi = new Map(batch ? batch.items.map((i) => [i.username, i]) : []);
+  const undecided = queue.filter((q) => !dec.has(q.username));
+  const missing = [];
+  if (batch) {
+    for (const i of batch.items) {
+      if (dec.has(i.username)) continue;
+      const overdue = !i.published || (Date.now() - new Date(i.scheduleAt).getTime() > 2 * 3600 * 1000);
+      if (overdue) missing.push(i);
+    }
+    missing.sort((a, b) => a.delaySec - b.delaySec);
+  }
+  return {
+    dec, stg, bi,
+    pending: undecided,                       // cards that still show action buttons
+    approved: undecided.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "approved"),
+    rejected: undecided.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "rejected"),
+    untouched: undecided.filter((q) => !stg.has(q.username)),
+    sentN: decisions.filter((d) => d.action === "sent").length,
+    batch, missing,
+  };
+}
+
+function render() {
+  const { queue, decisions, batch } = state;
+  const d = derive();
+  const decidedU = new Set(d.dec.keys());
+  const sent = d.sentN;
+  const rej = decisions.length - sent;
+  const batchSent = batch ? batch.items.filter((i) => d.dec.has(i.username)).length : 0;
+
+  $("summary").innerHTML =
+    `<span class="chip">En attente : <b>${queue.filter((q) => !decidedU.has(q.username)).length}</b></span>` +
+    `<span class="chip">✓ approuvés : <b>${d.approved.length}</b></span>` +
+    `<span class="chip">✗ rejetés : <b>${d.rejected.length}</b></span>` +
+    (decisions.length
+      ? `<span class="chip hot">Décisions à reprendre — envoyés : <b>${sent}</b> · rejetés : <b>${rej}</b></span>`
+      : "");
+
+  renderBars(d);
+  renderHint(d);
+
+  const decidedBox = $("decided");
+  decidedBox.innerHTML = decisions.length ? decisions.map((dd) => {
+    const tag = dd.action === "sent" ? "sent" : "rejected_manual";
+    const lbl = dd.action === "sent" ? "ENVOYÉ" : "rejeté";
+    return `<span class="decision-tag ${tag}" title="${esc(dd.reason || dd.detail || "")}">` +
+      `${esc(dd.username)} — ${lbl} ${when(dd.at)}</span> `;
+  }).join("") : "";
+
+  const qb = $("queue");
+  if (!queue.length) {
+    qb.innerHTML = `<div class="empty"><div class="big">📭</div>Rien en attente.<br>` +
+      `<span style="font-size:13px;">Poussez la file : <code>python run_forge_outreach.py --send-push</code></span></div>`;
+    return;
+  }
+  qb.innerHTML = "";
+  for (const item of queue) renderCard(qb, item, d);
+  for (const item of queue) loadImage(item.username);
+}
+
+/* ---------- the review bar / batch progress ---------- */
+function renderBars(d) {
+  const bars = $("bars");
+  const { batch, approved, rejected, missing } = d;
+  if (!batch) {
+    // REVIEW phase: stage counters + lock action
+    if (!d.pending.length) { bars.innerHTML = ""; return; }
+    const n = approved.length;
+    const showReset = approved.length + rejected.length > 0;
+    bars.innerHTML = `
+      <div class="bar">
+        <span class="grow">Marquez chaque carte <b>✓ Valider</b> (partira) ou <b>✗ Rejeter</b> (jamais contacté).
+          ${approved.length + rejected.length ? `<span class="note">Les marques ne font rien tant que le lot n'est pas verrouillé.</span>` : ""}</span>
+        ${showReset ? `<button class="btn ghost2" id="resetReview">↺ réinitialiser la revue</button>` : ""}
+        <button class="btn lock" id="lockOpen" ${n ? "" : "disabled"}
+                title="${n ? "" : "approuvez au moins un email pour verrouiller"}">Verrouiller le lot — ${n} envoi${n > 1 ? "s" : ""}</button>
+      </div>`;
+    if (showReset) $("resetReview").onclick = resetReview;
+    $("lockOpen").onclick = () => lockModal(null);
+    return;
+  }
+
+  // BATCH phase: delivery progress
+  const items = [...batch.items].sort((a, b) => a.delaySec - b.delaySec);
+  const sentN = items.filter((i) => d.dec.has(i.username)).length;
+  const next = items.find((i) => i.published && !d.dec.has(i.username));
+  const phaseDone = sentN === items.length;
+  const rows = items.map((i) => {
+    const decision = d.dec.get(i.username);
+    if (decision) {
+      return `<div class="row"><span class="u">${esc(i.username)}</span>` +
+        `<span class="st ok">✓ envoyé ${when(decision.at)}</span></div>`;
+    }
+    if (!i.published) {
+      return `<div class="row"><span class="u">${esc(i.username)}</span>` +
+        `<span class="st bad">jamais programmé ${i.publishError ? "— " + esc(i.publishError) : ""}</span></div>`;
+    }
+    return `<div class="row"><span class="u">${esc(i.username)}</span>` +
+      `<span class="st wait">⏳ programmé — envoi à ${hhmm(i.scheduleAt)}</span></div>`;
+  }).join("");
+  const republish = missing.length
+    ? `<button class="btn ghost2" id="lockMissing">↻ reprogrammer les ${missing.length} non partis</button>`
+    : "";
+  const summary2 = phaseDone
+    ? `Lot terminé — <b>${sentN}/${items.length} envoyés</b>. Les décisions attendent le retour local : <code>python run_forge_outreach.py --send-pull</code> (vide ensuite la console).`
+    : `Lot en cours — <b>${sentN}/${items.length} envoyés</b>` +
+      (next ? ` · prochain envoi vers <b>${hhmm(next.scheduleAt)}</b>` : "") +
+      `. Vous pouvez fermer l'onglet — le cron GitHub (un envoi par tick de 5 min) garde le calendrier.`;
+
+  bars.innerHTML = `
+    <div class="bar batch">
+      <span class="grow">${summary2} <span class="note" style="display:block;">Lot ${esc(batch.id || "")} verrouillé le ${when(batch.at)} — espacement : un email par tick de 5 à 10 min.</span></span>
+      ${republish}
+    </div>
+    <div class="bar batch mini-prog" style="margin-top:-8px;">${rows}</div>`;
+  const ml = $("lockMissing");
+  if (ml) ml.onclick = () => lockModal("missing");
+}
+
+function renderHint(d) {
+  const h = $("hint");
+  const { decisions, batch } = state;
+  if (batch) {
+    h.innerHTML = d.missing.length
+      ? `<b>${d.missing.length} envoi(s) du lot n'ont pas de statut de livraison.</b> ` +
+        `Cliquez « reprogrammer » et tapez <code>ENVOYER ${d.missing.length}</code> pour les replacer dans le calendrier.`
+      : `Les décisions du lot (${d.sentN} envoyés) ne seront enregistrées dans les drafts qu'au retour local : ` +
+        `<code>python run_forge_outreach.py --send-pull</code> — il refusera de vider la console tant que le lot n'est pas terminé.`;
+    return;
+  }
+  if (decisions.length) {
+    h.innerHTML = `Les décisions ci-dessus ne sont enregistrées dans les drafts qu'après un retour local : ` +
+      `<code>python run_forge_outreach.py --send-pull</code> (l'opération vide ensuite la console ; repoussez ensuite ce qui reste avec <code>--send-push</code>).`;
+    return;
+  }
+  h.innerHTML = `Chaque carte montre le draft complet. <b>✓ Valider</b> / <b>✗ Rejeter</b> marquent la carte pour le lot — ` +
+    `rien ne part tant que vous n'avez pas <b>verrouillé</b> en tapant <code>ENVOYER N</code>. ` +
+    `Les envois se feront alors depuis le serveur, espacés de 5 à 10 min.`;
+}
+
+/* ---------- card rendering ---------- */
+function badges(item) {
+  let b = `<span class="badge src">${esc(item.email_source || "csv")}</span>`;
+  if (item.research_confidence) b += `<span class="badge src">confiance ${esc(item.research_confidence)}</span>`;
+  if (item.revised) b += `<span class="badge w" title="${esc("Relu par le rédacteur : " + (item.revision || ""))}">✏️ modifié ${when(item.revisedAt)}</span>`;
+  if (item.image_status === "failed") b += `<span class="badge w">image : échec à la génération</span>`;
+  if (item.checks) {
+    if (item.checks.ok.length) b += `<span class="badge o">${item.checks.ok.length} ✓</span>`;
+    if (item.checks.warn.length) b += `<span class="badge w">${item.checks.warn.length} ⚠</span>`;
+    if (item.checks.stop.length) b += `<span class="badge s">${item.checks.stop.length} STOP</span>`;
+  }
+  return b;
+}
+
+function checksList(item) {
+  if (!item.checks) return "";
+  const out = [];
+  for (const [lv, arr] of [["s", item.checks.stop], ["w", item.checks.warn], ["o", item.checks.ok]])
+    for (const note of arr) out.push(`<div class="line ${lv}"><b>${lv === "s" ? "STOP" : lv === "w" ? "warn" : "ok"}</b> · ${esc(note)}</div>`);
+  return out.join("");
+}
+
+function renderCard(root, item, d) {
+  const u = item.username || "";
+  const decision = d.dec.get(u);
+  const stagedMark = d.stg.get(u);
+  const batchItem = d.bi.get(u);
+  const el = document.createElement("article");
+  el.className = "card";
+  if (decision) el.className += " decided";
+  else if (batchItem && !decision) el.className += " locked";
+  el.id = "card-" + esc(u);
+  el.innerHTML = `
+    <div class="card-top">
+      <div class="avatar">${esc((u[0] || "?").toUpperCase())}</div>
+      <div class="who">
+        <div class="to">${esc(item.full_name || u)} <span class="at">→ ${esc(item.email_address)}</span></div>
+        ${item.stats ? `<div class="stats">${esc(item.stats)}</div>` : ""}
+      </div>
+      <div class="meta">
+        ${item.external_url ? `<a href="${esc(item.external_url)}" target="_blank" rel="noopener">site ↗</a><br>` : ""}
+        draft du ${when(item.updated_at)}
+      </div>
+    </div>
+    <div class="inner">
+      <div class="badges">
+        ${decision
+          ? `<span class="stag ${decision.action === "sent" ? "appr" : "rej"}">${decision.action === "sent" ? "✓ ENVOYÉ" : "✗ rejeté"} ${when(decision.at)}</span>`
+          : batchItem && !decision
+            ? `<span class="stag" style="background:var(--chip-blue);color:#1e4f80;">⏳ dans le lot — envoi programmé ${batchItem.scheduleAt ? "à " + hhmm(batchItem.scheduleAt) : ""}</span>`
+            : stagedMark
+              ? `<span class="stag ${stagedMark.choice === "approved" ? "appr" : "rej"}">${stagedMark.choice === "approved" ? "✓ approuvé pour le lot" : "✗ rejeté (au verrouillage)"}</span>`
+              : ""}
+        ${badges(item)}
+      </div>
+      ${bioHtml(item)}
+      <div class="subject">${esc(item.subject)}</div>
+      <div class="body">${esc(item.body)}</div>
+      <div class="mock"><div class="cap">Maquette jointe à l'email ${item.attachment && item.attachment.present ? "" : "<b>(absente — email sans image)</b>"}</div>
+        <div class="mockin" data-user="${esc(u)}"><div class="none">chargement du visuel…</div></div>
+      </div>
+      ${factsHtml(item)}
+      <div class="checks">${checksList(item)}</div>
+    </div>
+    <div class="actions">${actionsHtml(item, u, decision, stagedMark)}</div>`;
+  root.appendChild(el);
+
+  const a = el.querySelector('[data-act="rej"]');
+  if (a) a.onclick = () => stage(u, "rejected");
+  const ed = el.querySelector('[data-act="edit"]');
+  if (ed) ed.onclick = () => reviseModal(item);
+  const ap = el.querySelector('[data-act="appr"]');
+  if (ap) ap.onclick = () => stage(u, "approved");
+}
+
+function actionsHtml(item, u, decision, stagedMark) {
+  if (decision || (state.batch && state.batch.items.some((i) => i.username === u))) {
+    return ""; // decided or locked: no buttons (card is .decided/.locked -> actions hidden anyway)
+  }
+  const on = stagedMark && stagedMark.choice === "approved";
+  const onR = stagedMark && stagedMark.choice === "rejected";
+  const stagedTitle = "Désélectionner cette carte (elle redevient sans marque)";
+  return `
+    <button class="btn reject ${onR ? "on" : ""}" data-act="rej" title="${onR ? stagedTitle : "Marquer rejeté — aucun email ne partira pour ce prospect"}"
+      ${onR ? `aria-pressed="true"` : ""}>${onR ? "✗ rejeté — retirer" : "✗ Rejeter"}</button>
+    <button class="btn edit" data-act="edit" ${stagedMark ? "disabled title=\"Retirez d'abord la marque ✓/✗ pour pouvoir modifier\"" : ""}>Modifier${stagedMark ? " (retirez la marque)" : ""}</button>
+    <button class="btn approve ${on ? "" : "off"}" data-act="appr" title="${on ? stagedTitle : "Marquer approuvé — l'email partira au verrouillage du lot"}"
+      ${on ? `aria-pressed="true"` : ""}>${on ? "✓ approuvé" : "✓ Valider"}</button>`;
+}
+
+function bioHtml(item) {
+  const b = item.bio || {};
+  const rows = [];
+  if (b.role_title) rows.push(["rôle", b.role_title]);
+  if (b.niche) rows.push(["niche", b.niche]);
+  if (b.offerings) rows.push(["offres", b.offerings]);
+  if (b.audience) rows.push(["audience", b.audience]);
+  if (b.pricing_notes) rows.push(["prix", b.pricing_notes]);
+  if (!rows.length) return "";
+  return '<div class="bio">' + rows.map(([k, v]) =>
+    `<b>${k} :</b> ${esc(v)}`).join("<br>") + "</div>";
+}
+
+function factsHtml(item) {
+  const facts = (item.facts_cited || "").split("; ").map((s) => s.trim()).filter(Boolean);
+  if (!facts.length) return "";
+  return `<details><summary>Traçabilité des faits cités (${facts.length})</summary><ul>` +
+    facts.map((f) => `<li>${esc(f)}</li>`).join("") + "</ul></details>";
+}
+
+async function loadImage(username) {
+  const holder = document.querySelector(`.mockin[data-user="${CSS.escape(username)}"]`);
+  if (!holder) return;
+  try {
+    const r = await api("/api/image?username=" + encodeURIComponent(username));
+    if (!r.present) { holder.innerHTML = '<div class="none">aucune image poussée pour ce brouillon</div>'; return; }
+    const img = document.createElement("img");
+    img.alt = "maquette de l'app — sera jointe à l'email";
+    img.src = "data:image/png;base64," + r.b64;
+    holder.innerHTML = "";
+    holder.appendChild(img);
+  } catch (e) {
+    holder.innerHTML = '<div class="none">visuel indisponible (' + esc(e.message) + ")</div>";
+  }
+}
+
+/* ---------- staging ---------- */
+async function stage(username, choice) {
+  try {
+    await api("/api/stage", { username, choice });
+    await load();
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+async function resetReview() {
+  if (!confirm("Retirer toutes les marques ✓/✗ ? Les cartes redeviennent sans marque (rien n'est encore décidé).")) return;
+  try {
+    for (const s of state.staged) await api("/api/stage", { username: s.username, choice: null });
+    await load();
+    toast("Revue réinitialisée", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  }
+}
+
+/* ---------- the lock modal ---------- */
+function lockModal(mode) {
+  const d = derive();
+  const list = mode === "missing" ? d.missing : d.approved;
+  if (!list.length) { toast("Rien à verrouiller", "err"); return; }
+  const n = list.length;
+  const rejectedN = mode === "missing" ? 0 : d.rejected.length;
+
+  const order = mode === "missing"
+    ? list.map((i) => i) // batch items
+    : list.map((q) => q);
+  const rows = order.map((it, idx) => {
+    const isBatch = mode === "missing";
+    const username = it.username;
+    const email = isBatch ? it.email : it.email_address;
+    const subject = isBatch ? it.subject : it.subject;
+    const delayMin = isBatch ? Math.round((it.delaySec || 0) / 60) : null;
+    const when2 = mode === "missing"
+      ? (delayMin ? "~" + delayMin + " min après le précédent" : "immédiat")
+      : (idx === 0 ? "immédiat" : "5-10 min après le précédent");
+    return `<div class="l"><span class="who2">${esc(username)}</span>` +
+      `<span class="what">${esc(email)}<br><span style="color:var(--muted);">${esc(subject)}</span></span>` +
+      `<span class="when2">${when2}</span></div>`;
+  }).join("");
+
+  $("lockTitle").textContent = mode === "missing"
+    ? "Reprogrammer les envois jamais partis"
+    : `Verrouiller le lot — ${n} email${n > 1 ? "s" : ""} partiront`;
+  $("lockBody").innerHTML = mode === "missing"
+    ? `<p>${n} envoi${n > 1 ? "s" : ""} du lot ${esc(state.batch.id || "")} n'ont pas de statut de livraison. Ils vont être replacés dans le calendrier (un par tick, 5 à 10 min d'écart).</p>
+       <div class="locklist">${rows}</div>`
+    : `<p>Valider le verrouillage enregistre <b>${n} envoi${n > 1 ? "s" : ""}</b> dans le calendrier (le premier part au prochain tick — 5 min max — puis un toutes les 5 à 10 min) —
+       et ${rejectedN ? `<b>${rejectedN} rejet${rejectedN > 1 ? "s" : ""}</b> comme définitif${rejectedN > 1 ? "s" : ""}` : "aucun rejet"}.</p>
+       <div class="locklist">${rows}</div>` +
+       (rejectedN
+         ? `<p style="margin-top:8px;">Raison appliquée aux ${rejectedN} rejet${rejectedN > 1 ? "s" : ""} (facultative) :</p>
+            <textarea id="lockRejectReason" rows="2" placeholder="Ex. : déjà en cours avec un autre éditeur, offre pas adaptée…"></textarea>`
+         : "");
+  const ph = $("lockPhrase");
+  ph.value = "";
+  ph.placeholder = "ENVOYER " + n;
+  ph.className = "";
+  $("lockMsgs").innerHTML = `<div class="info">Pour verrouiller, tapez exactement <b>ENVOYER ${n}</b> — c'est la confirmation humaine unique pour tout le lot.</div>`;
+  const go = $("lockGo");
+  go.disabled = true;
+  go.textContent = mode === "missing" ? "Reprogrammer" : "Verrouiller le lot";
+  ph.oninput = () => {
+    const ok = ph.value.trim().toUpperCase() === "ENVOYER " + n;
+    go.disabled = !ok;
+    ph.className = ph.value ? (ok ? "ok" : "bad") : "";
+    $("lockMsgs").innerHTML = ph.value && !ok
+      ? `<div class="err">Ce n'est pas le bon nombre ou la bonne phrase — aucun verrouillage possible.</div>`
+      : `<div class="info">Pour verrouiller, tapez exactement <b>ENVOYER ${n}</b> — c'est la confirmation humaine unique pour tout le lot.</div>`;
+  };
+  go.onclick = () => {
+    go.disabled = true;
+    $("lockMsgs").innerHTML = '<div class="info">Verrouillage en cours — création du lot + programmation des envois…</div>';
+    const reasonEl = $("lockRejectReason");
+    const payload = {
+      confirm: ph.value.trim(),
+      missingOnly: mode === "missing",
+    };
+    if (mode !== "missing" && rejectedN && reasonEl) payload.rejectReason = reasonEl.value.trim();
+    api("/api/lock", payload)
+      .then((r) => {
+        const n = r.batch.items.length;
+        const pl = (s) => (n > 1 ? s + "s" : s);
+        closeModals();
+        toast(`Lot verrouillé — ${n} envoi${pl("")} programmé${pl("")} (un par tick de 5-10 min)`, "ok");
+        load();
+      })
+      .catch((e) => {
+        go.disabled = false;
+        $("lockMsgs").innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+      });
+  };
+  openModal("lockModalBack");
+  setTimeout(() => ph.focus(), 50);
+}
+
+/* ---------- revise modal ---------- */
+function reviseModal(item) {
+  $("revTitle").textContent = "Modifier l'email — " + item.username;
+  $("revInstr").value = "";
+  $("revMsgs").innerHTML = "";
+  const go = $("revGo");
+  go.disabled = false;
+  go.onclick = () => {
+    const instruction = $("revInstr").value.trim();
+    if (!instruction) {
+      $("revMsgs").innerHTML = '<div class="err">Écrivez d\'abord ce que vous voulez changer.</div>';
+      return;
+    }
+    go.disabled = true;
+    $("revMsgs").innerHTML = '<div class="info">Le rédacteur réécrit l\'email (quelques secondes)…</div>';
+    api("/api/revise", { username: item.username, instruction })
+      .then(() => {
+        toast("Email réécrit — relisez puis marquez la carte", "ok");
+        closeModals();
+        load();
+      })
+      .catch((e) => {
+        go.disabled = false;
+        $("revMsgs").innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+      });
+  };
+  openModal("revModalBack");
+  setTimeout(() => $("revInstr").focus(), 50);
+}
+
+/* ---------- modal plumbing ---------- */
+function openModal(id) {
+  for (const b of document.querySelectorAll(".modal-back")) b.classList.remove("on");
+  $(id).classList.add("on");
+}
+function closeModals() {
+  for (const b of document.querySelectorAll(".modal-back")) b.classList.remove("on");
+}
+document.querySelectorAll(".modal-back").forEach((mb) => {
+  mb.addEventListener("click", (e) => { if (e.target === mb) closeModals(); });
+});
+document.querySelectorAll("[data-close]").forEach((b) => b.onclick = closeModals);
+
+$("refreshBtn").onclick = load;
+initToken();
+setInterval(() => {
+  const open = [...document.querySelectorAll(".modal-back.on")];
+  if (TOKEN && !open.length) load();
+}, 20000);
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "forge-send-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Forge Email Mastermind web console (Vercel): a human reviews each outreach draft — recipient card, full email, app mockup — and types the recipient's address to send it. Nothing sends automatically.",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.15"
+  }
+}
