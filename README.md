@@ -37,20 +37,26 @@ secrets GitHub. Le code déployé vient de
    - chaque approbation est **gelée** dans un enregistrement de lot
      (`forge:batch` : texte exact, adresse, pièce jointe) — un push ou une
      édition ultérieure ne peut plus changer ce qui part ;
-   - le lot est prêt : **le premier email part au prochain tick du cron**
-     (5 min max), puis un email par tick — l'intervalle 5-10 min est garanti
-     par construction, jamais de rafale.
-4. **Laisse tourner** : le cron GitHub Actions (toutes les 5 min) appelle
+   - le lot est prêt : **le premier email part au prochain tick du cron**,
+     puis un email par tick. L'intervalle visé entre deux envois est 5-10 min —
+     dans la pratique, GitHub Actions exécute les runs programmés de façon
+     **best-effort** : sur un dépôt peu actif, des écarts de plusieurs heures
+     entre ticks ont été observés (4h30). Le lot se vide donc au rythme des
+     ticks réels, jamais en rafale (un tick = un email au plus) ; pour
+     envoyer tout de suite sans attendre le tick suivant : bouton
+     « Run workflow » sur GitHub ou `gh workflow run send-due.yml`.
+4. **Laisse tourner** : le cron GitHub Actions (toutes les 5 min —
+   exécution best-effort, cf. *Le calendrier* ci-dessous) appelle
    `/api/senddue`, qui relaie **au plus un** email `queued` par tick vers
    `/api/batchsend` (SMTP sur Vercel), lequel enregistre la décision `sent`
    (`via: batch`). Tu peux fermer le navigateur. La console affiche la
    progression (`Lot en cours — 2/5 envoyés · prochain envoi vers 14:05`).
    Un tick manqué est rattrapé au tick suivant (auto-réparation) ; un double
-   tick est inoffensif (chaque envoi est protégé par un claim). Pour que le
-   premier email parte **immédiatement** après le verrouillage au lieu
-   d'attendre le prochain tick : bouton « Run workflow » sur GitHub, ou
-   `gh workflow run send-due.yml` (dépôt
-   `analysemarket705-prog/forge-send-console`).
+   tick est inoffensif (chaque envoi est protégé par un claim). Pour faire
+   partir un email **immédiatement** sans attendre le prochain tick : bouton
+   « Run workflow » sur GitHub, ou `gh workflow run send-due.yml` (dépôt
+   `analysemarket705-prog/forge-send-console`) — à relancer par email à
+   envoyer si les ticks tardent.
 5. **Récupère les décisions** quand le lot est terminé (`--send-pull`) : les
    mds portent `status: sent` (`sent_at`, texte exact envoyé — syncé dans la
    section `## Email draft` si l'email avait été modifié) ou
@@ -102,12 +108,29 @@ Détails utiles :
 
 ## Le calendrier : GitHub Actions (`forge-send-due`)
 
-`.github/workflows/send-due.yml` — toutes les 5 min, et à la demande via le
-bouton « Run workflow ». Le workflow ne fait **qu'un appel HTTP** :
-`POST $FORGE_CONSOLE_URL/api/senddue` avec le token console. Côté serveur,
-`senddue` lit le lot verrouillé dans le KV et envoie **un seul** email
-`queued` au plus (le plus ancien) à `/api/batchsend`, qui fait le SMTP. Les
-seuls réglages du dépôt GitHub :
+`.github/workflows/send-due.yml` — expression `2-59/5 * * * *` (toutes les
+5 min), et à la demande via le bouton « Run workflow ». Le workflow ne fait
+**qu'un appel HTTP** : `POST $FORGE_CONSOLE_URL/api/senddue` avec le token
+console. Côté serveur, `senddue` lit le lot verrouillé dans le KV et envoie
+**un seul** email `queued` au plus (le plus ancien) à `/api/batchsend`, qui
+fait le SMTP.
+
+**Fiabilité observée — lire avant de verrouiller un lot pressé** : GitHub
+exécute les workflows programmés de façon best-effort, et sur un dépôt à
+faible activité les ticks sont souvent très espacés (constaté : 2 runs en
+8h30, écart de 4h30 — au lieu des ~96 attendus). Un lot verrouillé n'est
+**pas** garanti de s'écouler à 5-10 min ; il s'écoule au rythme des ticks
+réels (au plus un email par tick). Le lot d'aujourd'hui est donc aussi
+actionnable à la main : `gh workflow run send-due.yml` après le lock fait
+partir le premier email immédiatement, et une relance par email restant
+maintient la cadence voulue. Chaque tick est idempotent (un seul email, un
+claim `SET NX` par prospect) — dispatcher plusieurs fois est inoffensif, ça
+ne fait jamais partir deux emails au même tick. Si le rythme 5-10 min devient
+un besoin ferme, le remplaçant naturel est un scheduler du côté serveur
+(QStash à token valide, ou Vercel Cron en plan Pro) — `senddue` reste le
+relais commun quel que soit le ticker.
+
+Les seuls réglages du dépôt GitHub :
 
 | Réglage | Type | Valeur |
 |---|---|---|
