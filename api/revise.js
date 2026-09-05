@@ -17,11 +17,10 @@
 // FORGE_REVISE_BASE override the endpoint (defaults: deepseek-chat,
 // https://api.deepseek.com).
 
-import { json, requireToken, readBody, kv, kvGetQueue, kvGetDecisions, kvGetStaged, kvGetBatch, Q_QUEUE } from "./_lib.js";
+import { json, requireToken, readBody, kv, kvGetQueue, kvGetDecisions, kvGetStaged, kvGetBatch, SITE_LINE, Q_QUEUE } from "./_lib.js";
 
 const SUBJECT_PREFIX = "[Partnership]";
 const SIGN_OFF = "-Ronan Delerue";
-const SITE_LINE = "Forge — https://forgefitapp.co/";
 
 const SYSTEM = `You are the Email Contact Agent Writer for Forge, modified to revise an \
 existing outreach email on request. Forge builds custom fitness apps for fitness \

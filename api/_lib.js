@@ -7,7 +7,9 @@
 //
 // Everything lives under forge:* keys; the whole state is replaced by the
 // local push (queue + images + decisions cleared) and drained by the local
-// pull, so the console never accumulates history.
+// pull, so the console never accumulates history. Tracking events
+// (forge:tkmap:*, forge:trk:*, forge:trkusers) are the exception — they
+// survive the pull by design, see the tracking section below.
 
 import crypto from "node:crypto";
 
@@ -23,6 +25,69 @@ export const Q_STAGED = "forge:staged";     // string JSON array: [{username, ch
 export const Q_BATCH = "forge:batch";       // string JSON: the active batch {id, secret, at, items:[...]} or empty
 export const imgKey = (username) => `forge:img:${username}`;
 export const claimKey = (username) => `forge:claim:${username}`; // batchsend dedup claim, SET NX EX 3600
+
+// Email tracking (stage 4c) -----------------------------------------------
+// Every batch email carries a per-send token (tk = 24 hex). At build time the
+// signature URL is mechanically rewritten to {trackBase}/api/r?tk=… (click,
+// 302 back to the site) and an invisible HTML mirror part adds
+// {trackBase}/api/pix?tk=… (open). Events land under forge:trk:* — keys the
+// console clear never touches, so KPIs outlive the review lifecycle.
+export const SITE_URL = "https://forgefitapp.co/";          // the one URL in every email
+export const SITE_LINE = "Forge — https://forgefitapp.co/"; // house-rule closing line (revise.js mirrors it)
+export const Q_TRK_USERS = "forge:trkusers";                // set: usernames with a tracked send
+export const tkMapKey = (tk) => `forge:tkmap:${tk}`;        // token -> {username, sentAt}
+export const trackKey = (username) => `forge:trk:${username}`; // list of events {kind, tk, at, ...}, newest first
+export const TRK_LIST_CAP = 100;        // LTRIM bound per prospect
+export const TRK_MAP_TTL_S = 7776000;   // tk map TTL: 90 days — any reply lands well before that
+export const OUTCOMES = ["positive", "neutral", "negative", "bounce"];
+
+const TRACK_BASE_DEFAULT = "https://go.forgefitapp.co"; // CNAME -> the console project
+export function trackBase() {
+  return (process.env.FORGE_TRACK_BASE || TRACK_BASE_DEFAULT).replace(/\/+$/, "");
+}
+export const trackerUrl = (tk) => `${trackBase()}/api/r?tk=${tk}`;
+export const pixelUrl = (tk) => `${trackBase()}/api/pix?tk=${tk}`; // no trailing slash: a 308 on the pixel would be cached forever
+
+/** The signature URL in the text body becomes the tracked link. The
+ *  rewritten text is what SMTP ships AND what the decision records, so the
+ *  pulled md stays byte-truthful. Mechanical, post-freeze, at build time. */
+export function rewriteText(body, tk) {
+  return String(body).split(SITE_URL).join(trackerUrl(tk));
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Plain-text mirror as an HTML part carrying the open pixel. Visible copy
+ *  identical to the text part; nodemailer nests it as multipart/alternative.
+ *  (track contains no & < >, so it survives escHtml verbatim.) */
+export function htmlMirror(text, tk) {
+  const track = trackerUrl(tk);
+  const mirrored = String(text)
+    .split(/\r?\n/)
+    .map((line) => escHtml(line).replaceAll(track, `<a href="${track}">${track}</a>`))
+    .join("<br>\n");
+  return `${mirrored}<br>\n<img src="${pixelUrl(tk)}" width="1" height="1" alt="" style="display:none">`;
+}
+
+/** 1x1 transparent GIF89a — the open-pixel payload. */
+export const PIXEL_GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+
+/** ?name=… from req.url (hand-rolled like image.js — no URLSearchParams). */
+export function qParam(url, name) {
+  const q = String(url || "").split("?")[1] || "";
+  for (const part of q.split("&")) {
+    const kv = part.split("=");
+    if (kv[0] === name) {
+      try { return decodeURIComponent(kv[1] || ""); } catch { return kv[1] || ""; }
+    }
+  }
+  return "";
+}
+
+export const trackEvt = (kind, tk, at, extra) =>
+  JSON.stringify(Object.assign({ kind, tk, at }, extra));
 
 // KV --------------------------------------------------------------------
 async function kvFetch(path, body) {

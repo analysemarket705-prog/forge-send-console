@@ -151,6 +151,22 @@
            font-size: 14px; z-index: 30; display: none; max-width: 90vw; }
   .toast.err { background: var(--stop); }
   .toast.ok { background: var(--ok); }
+  /* tabs (Revue / KPIs) */
+  .tabs { display: flex; gap: 6px; margin: 2px 0 12px; }
+  .tab { font: inherit; font-weight: 600; font-size: 13.5px; padding: 7px 14px;
+         border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
+  .tab.on { background: #14140f; color: #fff; border-color: #14140f; }
+  /* KPI table */
+  table.kpis { width: 100%; border-collapse: collapse; background: #fff;
+               border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13.5px; }
+  table.kpis th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+                  color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line);
+                  background: #fafaf6; white-space: nowrap; }
+  table.kpis td { padding: 9px 10px; border-top: 1px solid #efefe8; vertical-align: top; }
+  table.kpis td.kaction { white-space: nowrap; }
+  table.kpis select { font: inherit; font-size: 13px; padding: 3px 6px;
+                      border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+  .kval { font-weight: 700; color: var(--ok); }
 </style>
 </head>
 <body>
@@ -173,11 +189,24 @@
   </div>
 
   <div id="app" style="display:none;">
-    <div class="summary" id="summary"></div>
-    <div id="bars"></div>
-    <p class="hint" id="hint"></p>
-    <div id="decided"></div>
-    <div id="queue"></div>
+    <div class="tabs">
+      <button class="tab on" data-pane="review" type="button">Revue d'envoi</button>
+      <button class="tab" data-pane="kpis" type="button">KPIs</button>
+    </div>
+
+    <div id="reviewPane">
+      <div class="summary" id="summary"></div>
+      <div id="bars"></div>
+      <p class="hint" id="hint"></p>
+      <div id="decided"></div>
+      <div id="queue"></div>
+    </div>
+
+    <div id="kpis" style="display:none;">
+      <div class="summary" id="kpiSummary"></div>
+      <p class="hint" id="kpiHint"></p>
+      <div id="kpiWrap"></div>
+    </div>
   </div>
 </main>
 
@@ -218,6 +247,7 @@ const $ = (id) => document.getElementById(id);
 const API = "";
 let TOKEN = sessionStorage.getItem("forgeConsoleToken") || "";
 let state = { queue: [], decisions: [], staged: [], batch: null };
+let pane = "review"; // "review" | "kpis" — drives what the poll/refresh buttons fetch
 
 async function api(path, body) {
   const opt = { method: body === undefined ? "GET" : "POST", headers: { "x-forge-token": TOKEN } };
@@ -247,6 +277,13 @@ function hhmm(secs) {
   const d = new Date(secs);
   return isNaN(d) ? "" : d.toLocaleString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
+function dur(sec) {
+  if (sec == null || isNaN(sec)) return "";
+  if (sec < 60) return Math.max(0, Math.round(sec)) + " s";
+  if (sec < 3600) return Math.max(1, Math.round(sec / 60)) + " min";
+  const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
+  return h + " h" + (m ? String(m).padStart(2, "0") : "");
+}
 function toast(msg, cls) {
   const t = $("toast");
   t.textContent = msg;
@@ -258,7 +295,12 @@ function toast(msg, cls) {
 
 /* ---------- token gate ---------- */
 function initToken() {
-  if (TOKEN) { $("app").style.display = ""; $("tokenBox").style.display = "none"; load(); return; }
+  if (TOKEN) {
+    $("app").style.display = ""; $("tokenBox").style.display = "none";
+    switchPane("review"); // never land on KPIs with a fresh login
+    load();
+    return;
+  }
   $("app").style.display = "none"; $("tokenBox").style.display = "";
   $("tokenInput").focus();
   $("tokenGo").onclick = () => {
@@ -688,6 +730,110 @@ function reviseModal(item) {
   setTimeout(() => $("revInstr").focus(), 50);
 }
 
+/* ---------- KPIs tab ---------- */
+const REPLY_LABELS = { positive: "positive", neutral: "neutre", negative: "négative", bounce: "NPAI" };
+const REPLY_BADGE = { positive: "o", neutral: "b", negative: "s", bounce: "w" };
+function rcHtml(outcome) {
+  const cls = REPLY_BADGE[outcome] || "";
+  return `<span class="badge ${cls}">${REPLY_LABELS[outcome] || outcome || "—"}</span>`;
+}
+
+async function loadKpis() {
+  const wrap = $("kpiWrap");
+  wrap.classList.add("busy");
+  try {
+    const data = await api("/api/kpi");
+    renderKpis(data);
+  } catch (e) {
+    if (String(e.message).includes("401")) {
+      sessionStorage.removeItem("forgeConsoleToken");
+      TOKEN = "";
+      initToken();
+    } else {
+      $("kpiSummary").innerHTML = "";
+      wrap.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+    }
+  } finally {
+    wrap.classList.remove("busy");
+  }
+}
+
+function kpiRow(r) {
+  const last = r.replies && r.replies.length ? r.replies[0] : null;
+  const sel = [["", "−"], ...Object.entries(REPLY_LABELS)]
+    .map(([v, l]) => `<option value="${v}"${last && last.outcome === v ? " selected" : ""}>${l}</option>`)
+    .join("");
+  return `<tr>
+    <td><b>${esc(r.username)}</b></td>
+    <td>${when(r.sentAt)}</td>
+    <td>${r.opened
+      ? `<span class="kval">✓</span> ouvert` +
+        (r.firstOpenDelaySec != null ? ` ${dur(r.firstOpenDelaySec)} après envoi` : "") +
+        (r.openEvents > 1 ? ` <span style="color:var(--muted)">(${r.openEvents}×)</span>` : "")
+      : "—"}</td>
+    <td>${r.clicks
+      ? `<b>${r.clicks}</b>${r.firstClickDelaySec != null ? ` · ${dur(r.firstClickDelaySec)}` : ""}`
+      : "—"}</td>
+    <td>${last ? rcHtml(last.outcome) + ` <span style="color:var(--muted);font-size:12px;">${when(last.at)}</span>` : "—"}</td>
+    <td class="kaction"><select data-u="${esc(r.username)}" title="Marquer / remplacer / retirer la réponse de ce prospect">${sel}</select>
+      <button class="btn ghost2 ksave" data-u="${esc(r.username)}" style="padding:4px 10px;">enreg.</button></td>
+  </tr>`;
+}
+
+function renderKpis(data) {
+  const t = data.totals;
+  const wrap = $("kpiWrap");
+  $("kpiHint").innerHTML =
+    `Ouvertures mesurées par <b>pixel</b> dans chaque email de lot (Gmail/Outlook préchargent les images via leurs serveurs — compter comme « au moins une ouverture + délai de la première »). ` +
+    `Clics = lien de la signature suivi. Réponses = <b>marquées à la main</b> ici depuis la boîte Zoho (semi-manuel : Zoho gratuit n'a pas d'IMAP).`;
+  if (!t.sent) {
+    $("kpiSummary").innerHTML = "";
+    wrap.innerHTML = `<div class="empty"><div class="big">📈</div>Aucun envoi suivi pour l'instant.<br>` +
+      `<span style="font-size:13px;">Le suivi démarre avec les emails envoyés en lot après ce déploiement — chaque email porte son propre lien et pixel,<br>` +
+      `et les événements restent affichés ici même après <code>--send-pull</code>.</span></div>`;
+    return;
+  }
+  const pct = (n) => (t.sent ? Math.round((100 * n) / t.sent) : 0);
+  const chips = [
+    `Envoyés : <b>${t.sent}</b>`,
+    `Ouverts ≥ 1 : <b>${t.opened}</b> (${pct(t.opened)}%)`,
+    `Clics : <b>${t.clicks}</b>${t.clickUsers ? ` — ${t.clickUsers} prospect${t.clickUsers > 1 ? "s" : ""} (${pct(t.clickUsers)}%)` : ""}`,
+    `Réponses : <b>${t.replies}</b>${t.replies ? " — " + Object.keys(REPLY_LABELS).filter((k) => t.byOutcome[k]).map((k) => rcHtml(k) + " " + t.byOutcome[k]).join(" ") : ""}`,
+  ];
+  $("kpiSummary").innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join("");
+
+  if (!data.rows.length) {
+    wrap.innerHTML = `<div class="empty">Aucune ligne à montrer.</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table class="kpis"><thead><tr>` +
+    `<th>Prospect</th><th>Envoyé</th><th>Ouverture</th><th>Clics</th><th>Réponse</th><th>Marquer / corriger</th>` +
+    `</tr></thead><tbody>${data.rows.map(kpiRow).join("")}</tbody></table>`;
+  for (const b of wrap.querySelectorAll(".ksave")) {
+    b.onclick = async () => {
+      const u = b.dataset.u;
+      const sel = wrap.querySelector(`select[data-u="${CSS.escape(u)}"]`);
+      b.disabled = true;
+      try {
+        const r = await api("/api/reply", { username: u, outcome: sel.value });
+        toast(r.outcome ? `Réponse ${REPLY_LABELS[r.outcome] || r.outcome} enregistrée pour ${u}` : `Marque de réponse retirée pour ${u}`, "ok");
+        await loadKpis();
+      } catch (e) {
+        toast(e.message, "err");
+        b.disabled = false;
+      }
+    };
+  }
+}
+
+function switchPane(p) {
+  pane = p;
+  $("reviewPane").style.display = p === "review" ? "" : "none";
+  $("kpis").style.display = p === "kpis" ? "" : "none";
+  for (const b of document.querySelectorAll(".tab")) b.classList.toggle("on", b.dataset.pane === p);
+  if (p === "kpis") loadKpis();
+}
+
 /* ---------- modal plumbing ---------- */
 function openModal(id) {
   for (const b of document.querySelectorAll(".modal-back")) b.classList.remove("on");
@@ -701,11 +847,14 @@ document.querySelectorAll(".modal-back").forEach((mb) => {
 });
 document.querySelectorAll("[data-close]").forEach((b) => b.onclick = closeModals);
 
-$("refreshBtn").onclick = load;
+$("refreshBtn").onclick = () => (pane === "kpis" ? loadKpis() : load());
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => switchPane(b.dataset.pane)));
 initToken();
 setInterval(() => {
   const open = [...document.querySelectorAll(".modal-back.on")];
-  if (TOKEN && !open.length) load();
+  if (TOKEN && !open.length) {
+    if (pane === "kpis") loadKpis(); else load();
+  }
 }, 20000);
 </script>
 </body>

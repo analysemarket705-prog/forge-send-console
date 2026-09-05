@@ -26,12 +26,45 @@
 // Reads NOTHING from the queue item: subject/body/email/attachment flag are
 // the snapshot frozen in the batch record at lock time — a send ships
 // exactly what the reviewer locked, even if the console was re-pushed since.
+//
+// Tracking (every delivery): a fresh tk is built per attempt and the frozen
+// body is mechanically rewritten — the signature URL becomes the tracked
+// /api/r?tk=… link, mirrored into an HTML part with the open pixel. That is
+// the ONLY post-freeze mutation, and it happens at build time below. The
+// recorded decision carries the REWRITTEN body (the exact bytes SMTP
+// shipped), so the local pull syncs the md to reality.
 
 import crypto from "node:crypto";
 
-import { json, readBody, kv, kvGetDecisions, kvGetBatch, smtpConfig, smtpSend, withBatchLock, Q_DECS, Q_BATCH, imgKey, claimKey } from "./_lib.js";
+import { json, readBody, kv, kvPipeline, kvGetDecisions, kvGetBatch, smtpConfig, smtpSend, withBatchLock, rewriteText, htmlMirror, trackKey, tkMapKey, trackEvt, Q_DECS, Q_BATCH, Q_TRK_USERS, imgKey, claimKey, TRK_MAP_TTL_S, TRK_LIST_CAP } from "./_lib.js";
 
 const CLAIM_FRESH_MS = 45 * 60 * 1000; // a claim older than this is a crashed attempt
+const TK_RE = /\?tk=([0-9a-f]{24})/;   // extracts the tracking token from a recorded body
+
+/**
+ * Idempotent tracking re-apply for the heal path: a crash between SMTP
+ * success and the pipeline write leaves a decision but no events — the next
+ * tick must close the gap. The tk lives in the recorded body (the tracked
+ * text is what decisions store); a legacy pre-tracking decision has none and
+ * needs nothing. KV failures are swallowed — the next tick tries again.
+ */
+async function healTracking(username, prior) {
+  const m = TK_RE.exec(prior.body || "");
+  if (!m) return;
+  const tk = m[1];
+  const rows = await kv("LRANGE", trackKey(username), "0", "-1").catch(() => null);
+  if (!Array.isArray(rows)) return;
+  const hasSent = rows.some((r) => {
+    try { const e = JSON.parse(r); return e.kind === "sent" && e.tk === tk; } catch { return false; }
+  });
+  if (hasSent) return;
+  await kvPipeline([
+    ["SET", tkMapKey(tk), JSON.stringify({ username, sentAt: prior.at }), "EX", String(TRK_MAP_TTL_S)],
+    ["LPUSH", trackKey(username), trackEvt("sent", tk, prior.at)],
+    ["LTRIM", trackKey(username), "0", String(TRK_LIST_CAP - 1)],
+    ["SADD", Q_TRK_USERS, username],
+  ]).catch(() => {});
+}
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return json(res, 405, { error: "POST only" });
@@ -69,6 +102,10 @@ export default async function handler(req, res) {
 
   const prior = decisions.find((d) => d.username === username);
   if (prior) {
+    // Tracking heal first: a crash between SMTP success and the pipeline
+    // write left the sent decision without its events — re-apply them
+    // idempotently from the tk embedded in the recorded (tracked) body.
+    await healTracking(username, prior);
     // Heal: the decision is the durable truth — make the item match it.
     // Serialized under withBatchLock against a FRESH read: the document
     // snapshot read above may already be stale (another delivery wrote it
@@ -108,11 +145,18 @@ export default async function handler(req, res) {
   }
 
   const from = cfg.fromName ? `"${cfg.fromName.replace(/"/g, "'")}" <${cfg.from}>` : cfg.from;
+  // Tracking: a fresh tk per attempt; the locked body gets ONE mechanical
+  // rewrite — the signature URL becomes the tracked /api/r?tk=… link —
+  // mirrored into an HTML part (multipart/alternative) carrying the open
+  // pixel. The rewritten text is what SMTP ships AND what the decision records.
+  const tk = crypto.randomBytes(12).toString("hex");
+  const textBody = rewriteText(item.body, tk);
   const mail = {
     from,
     to: item.email,
     subject: item.subject, // the locked snapshot, verbatim
-    text: item.body,
+    text: textBody,
+    html: htmlMirror(textBody, tk),
   };
   if (item.attach && item.attach.present) {
     const b64 = await kv("GET", imgKey(username));
@@ -134,15 +178,23 @@ export default async function handler(req, res) {
 
   try {
     const detail = await smtpSend(cfg, mail);
-    // Record the EXACT text that went out (frozen at lock) so the local
-    // --send-pull can sync the draft md to reality. LPUSH BEFORE the status
-    // update: the decision is the durable "done" marker (see batchPending).
-    await kv("LPUSH", Q_DECS, JSON.stringify({
-      username, action: "sent", at, to: item.email,
-      subject: item.subject, body: item.body,
-      revised: item.revised, revision: item.revision || "",
-      detail, via: "batch",
-    }));
+    // Tracking + decision in ONE pipeline: tk map, the sent event
+    // (LPUSH/LTRIM), the trkusers set — then the decision LAST, the durable
+    // "done" marker (see batchPending), so decision-exists => tracking-exists.
+    // The decision carries the REWRITTEN body (the exact bytes SMTP shipped),
+    // so the local --send-pull syncs the md to reality.
+    await kvPipeline([
+      ["SET", tkMapKey(tk), JSON.stringify({ username, sentAt: at }), "EX", String(TRK_MAP_TTL_S)],
+      ["LPUSH", trackKey(username), trackEvt("sent", tk, at, { via: "batch" })],
+      ["LTRIM", trackKey(username), "0", String(TRK_LIST_CAP - 1)],
+      ["SADD", Q_TRK_USERS, username],
+      ["LPUSH", Q_DECS, JSON.stringify({
+        username, action: "sent", at, to: item.email,
+        subject: item.subject, body: textBody,
+        revised: item.revised, revision: item.revision || "",
+        detail, via: "batch",
+      })],
+    ]);
     // Same fresh-read discipline as the heal path — never SET the snapshot.
     await withBatchLock(async () => {
       const cur = await kvGetBatch();
