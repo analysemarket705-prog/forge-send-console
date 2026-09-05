@@ -30,7 +30,7 @@
   main { max-width: 880px; margin: 0 auto; padding: 18px 14px 80px; }
   .summary { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; }
   .summary .chip { background: #fff; border: 1px solid var(--line); border-radius: 99px;
-                   padding: 4px 12px; font-size: 13px; }
+                   padding: 4px 12px; font-size: 13px; white-space: nowrap; }
   .summary .chip b { font-weight: 650; }
   .summary .chip.hot { border-color: var(--red); color: var(--red); }
   .chip.link, .decision-tag.link { cursor: pointer; }
@@ -42,12 +42,17 @@
          flex-wrap: wrap; align-items: center; font-size: 14px; }
   .bar .grow { flex: 1; min-width: 220px; }
   .bar .note { font-size: 12.5px; color: var(--muted); }
+  /* review-phase full-width note row: owns its flex line in every state */
+  .bar > .note.fullrow { flex-basis: 100%; }
   .bar.batch { border-color: #b8cbe0; background: #f7fafd; }
   .bar .n { font-weight: 700; }
   .btn { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 9px; }
   .btn.lock { background: var(--red); color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
   .btn.lock:hover:not(:disabled) { background: #cf2f14; }
   .btn.lock:disabled { background: #d8d8cf; color: #8f8f85; }
+  /* fixed width: the "— N envoi(s)" counter changes length as marks land, but
+     the bar's row-2 geometry must be identical at 0 and N marks */
+  #lockOpen { min-width: 224px; text-align: center; white-space: nowrap; }
   .btn.ghost2 { background: #fff; border: 1px solid var(--line); color: var(--ink); }
   .btn.ghost2:hover:not(:disabled) { border-color: #c9c9bd; }
   .btn.ghost2:disabled { opacity: .55; }
@@ -96,9 +101,12 @@
   .mock .cap { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   /* The mockup holder reserves its layout (aspect-ratio below) before the
      image bytes arrive, so a late image never shifts the page under the
-     reviewer. Once an image has been decoded its real ratio is written
-     inline (aspect-ratio: w/h) and every later render reuses it. */
-  .mock .mockin { position: relative; width: min(100%, 340px); aspect-ratio: 9 / 16;
+     reviewer. The maker (app_image_maker.py IMAGE_SIZE) outputs 1536x1024 —
+     3/2 — so the default ratio IS the decoded ratio: a late decode no longer
+     changes any geometry (it used to be 9/16 and the box shrank ~375 px on
+     decode). Once an image has been decoded its real ratio is written inline
+     (aspect-ratio: w/h), which is a no-op for 3/2 output. */
+  .mock .mockin { position: relative; width: min(100%, 340px); aspect-ratio: 3 / 2;
                   background: #eceae3; border: 1px solid var(--line); border-radius: 10px;
                   overflow: hidden; }
   .mock .mockin img { position: absolute; inset: 0; width: 100%; height: 100%;
@@ -116,9 +124,13 @@
   .checks .line.w { background: var(--chip-warn); color: var(--warn); }
   .checks .line.s { background: var(--chip-stop); color: var(--stop); }
   .checks b { font-weight: 700; }
-  .actions { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 16px 14px;
-             border-top: 1px dashed var(--line); }
-  .actions .btn { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 9px; }
+  .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end;
+             padding: 10px 16px 14px; border-top: 1px dashed var(--line); }
+  .actions .btn { font: inherit; font-weight: 600; padding: 9px 16px; border-radius: 9px; white-space: nowrap; }
+  /* the stage chip lives at the LEFT of the action row (never in .badges — a
+     mark must not wrap/grow the card); the row is fixed-height in every state */
+  .stag.in-actions { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 5px 10px;
+                     margin-right: auto; white-space: nowrap; }
   .btn.reject { background: #fff; border: 1px solid var(--line); color: var(--ink); }
   .btn.reject:hover:not(:disabled) { border-color: var(--stop); color: var(--stop); }
   .btn.reject.on { background: var(--chip-warn); border-color: var(--warn); color: var(--warn); }
@@ -159,8 +171,10 @@
   .locklist .who2 { font-weight: 600; min-width: 150px; word-break: break-word; }
   .locklist .what { color: #3d3d35; min-width: 0; }
   .locklist .when2 { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 12px; }
-  /* A re-render in flight dims the pane but NEVER blocks clicks — buttons
-     disable themselves individually while their own fetch runs. */
+  /* A KPI / Terminés load in flight dims the pane (full table rebuilds) but
+     NEVER blocks clicks. The review pane never carries .busy — its refreshes
+     are quiet, and stage buttons disable themselves individually while their
+     own POST runs. */
   .busy { opacity: .6; }
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: #14140f; color: #fff; padding: 10px 16px; border-radius: 10px;
@@ -283,6 +297,11 @@ let domHistFp = "";      // history DOM <-> its source fingerprint
 let domKpiFp = "";       // KPIs pane DOM <-> kpi fingerprint
 let busyOps = 0;
 let lastScrollAt = 0;
+// per-card POST guard: users with a stage POST in flight keep their buttons
+// disabled until it lands, and reviewWriteQuiet silences the poll right after
+// a review write (the POST's own load() is the authoritative refresh)
+const busyUsers = new Set();
+let reviewWriteQuiet = 0;
 window.addEventListener("scroll", () => { lastScrollAt = performance.now(); }, { passive: true });
 
 /* ---------- helpers ---------- */
@@ -374,7 +393,11 @@ function sessFp(s) {
   ]);
 }
 async function refreshSession() {
-  beginBusy();
+  // No beginBusy() here ON PURPOSE: the review pane refreshes on every poll
+  // and after every action — dimming the whole pane on those reads was a big
+  // part of the "ça charge / ça freeze" feeling. The busy dim stays reserved
+  // for the KPI / Terminés loads (full table rebuilds), which call
+  // beginBusy()/endBusy() themselves.
   try {
     state = await api("/api/session");
     pruneImgCache();
@@ -383,8 +406,6 @@ async function refreshSession() {
     if (authOut(e)) return false;
     toast("Erreur : " + e.message, "err");
     return false;
-  } finally {
-    endBusy();
   }
 }
 async function load() {
@@ -417,7 +438,12 @@ function derive() {
 function render() {
   const d = derive();
   const { decisions, batch } = state;
-  const anchor = captureAnchor();
+  // An anchor is only needed when cards leave or arrive — a removal shifts
+  // whatever sits below it. A mark flip or a revised text rebuilds one card
+  // IN PLACE with invariant geometry (renderBars + card CSS reserve every
+  // state), so it must never nudge the scroll at all.
+  const structural = queueStructural(d);
+  const anchor = structural ? captureAnchor() : null;
   const batching = !!batch;
   const batchItems = batch ? batch.items : [];
   const inBatchN = batchItems.filter((i) => !d.dec.has(i.username)).length;
@@ -446,10 +472,10 @@ function render() {
       `onclick="switchPane('history')">${esc(dd.username)} — ${lbl} ${when(dd.at)}</span> `;
   }).join("") : "";
 
-  renderQueue(d);
+  diffQueue(d);
 
   pruneImgCache();
-  restoreAnchor(anchor);
+  if (anchor) restoreAnchor(anchor);
 }
 
 /* keep the reviewer's place in the scroll: an anchor element (the batch bar
@@ -475,12 +501,57 @@ function restoreAnchor(a) {
   window.scrollBy(0, next.getBoundingClientRect().top - a.top);
 }
 
-function renderQueue(d) {
+/* Structural = a card leaves the visible queue or a new one arrives (incl.
+   the crossings with the empty state). A pure mark flip / revise rebuild is
+   NOT structural: geometry is invariant, so no scroll anchor is needed. */
+function queueStructural(d) {
+  const articles = document.querySelectorAll("#queue article");
+  const v = d.visible;
+  if (!v.length) return articles.length > 0;       // cards -> empty state
+  if (!articles.length) return true;               // empty state -> cards
+  if (articles.length !== v.length) return true;   // a card left or arrived
+  for (let i = 0; i < v.length; i++)
+    if (articles[i].dataset.u !== v[i].username) return true; // order drift
+  return false;
+}
+
+/* Node-preserving diff of the queue: a card whose fingerprint is unchanged
+   keeps its DOM node AND its painted <img> — the walk below touches nothing
+   for it. Only the card whose state moved is rebuilt in place (its .mockin
+   holder is transplanted so the decoded blob survives), and only removals /
+   insertions reorder — with the anchor render() already took. */
+function diffQueue(d) {
   const qb = $("queue");
   const v = d.visible;
-  if (!v.length) { qb.innerHTML = emptyStateHtml(d); return; }
-  qb.innerHTML = "";
-  for (const item of v) renderCard(qb, item, d);
+  const articles = [...qb.querySelectorAll("article")];
+  if (!v.length) {
+    // empty state — repaint only when its text actually changed
+    const html = emptyStateHtml(d);
+    if (qb.innerHTML !== html) qb.innerHTML = html;
+    return;
+  }
+  if (!articles.length) {
+    // crossing empty state -> cards: full mount (anchored by render())
+    qb.innerHTML = "";
+    for (const item of v) mountCard(qb, item, d);
+    scheduleImages();
+    return;
+  }
+  const alive = new Map(articles.map((el) => [el.dataset.u, el]));
+  const fp = new Map(v.map((it) => [it.username, cardFp(it, d)]));
+  const needed = new Set(v.map((it) => it.username));
+  for (const el of articles) if (!needed.has(el.dataset.u)) el.remove();
+  // walk the wanted order with a cursor: an intact card already at the cursor
+  // position is left completely alone; a drifted one is only relocated
+  let cursor = qb.firstElementChild;
+  for (const item of v) {
+    const u = item.username;
+    const el = alive.get(u);
+    if (!el) { mountCard(qb, item, d); continue; }
+    if (el._fp !== fp.get(u)) rebuildCard(el, item, d);
+    if (cursor === el) { cursor = cursor.nextElementSibling; continue; }
+    qb.insertBefore(el, cursor);
+  }
   scheduleImages();
 }
 
@@ -519,19 +590,24 @@ function renderBars(d) {
   const bars = $("bars");
   const { batch, approved, rejected } = d;
   if (!batch) {
-    // REVIEW phase: stage counters + lock action
+    // REVIEW phase: stage counters + lock action — CONSTANT geometry for 0
+    // and N marks (a first mark must not move anything). Row 1 = full-width
+    // note, same text in every state; row 2 = grow spacer + reset button
+    // always rendered, visibility:hidden at 0 marks (reserved space, onclick
+    // bound only when visible) + lock button at fixed min-width.
     if (!d.visible.length) { bars.innerHTML = ""; return; }
     const n = approved.length;
-    const showReset = approved.length + rejected.length > 0;
+    const marked = n + rejected.length > 0;
     bars.innerHTML = `
       <div class="bar">
-        <span class="grow">Marquez chaque carte <b>✓ Valider</b> (partira) ou <b>✗ Rejeter</b> (jamais contacté).
-          ${approved.length + rejected.length ? `<span class="note">Les marques ne font rien tant que le lot n'est pas verrouillé.</span>` : ""}</span>
-        ${showReset ? `<button class="btn ghost2" id="resetReview">↺ réinitialiser la revue</button>` : ""}
+        <span class="note fullrow">Marquez chaque carte <b>✓ Valider</b> (partira) ou <b>✗ Rejeter</b> (jamais contacté) —
+          les marques ne font rien tant que le lot n'est pas verrouillé.</span>
+        <span class="grow"></span>
+        <button class="btn ghost2" id="resetReview" ${marked ? "" : `tabindex="-1" aria-hidden="true" style="visibility:hidden;"`}>↺ réinitialiser la revue</button>
         <button class="btn lock" id="lockOpen" ${n ? "" : "disabled"}
                 title="${n ? "" : "approuvez au moins un email pour verrouiller"}">Verrouiller le lot — ${n} envoi${n > 1 ? "s" : ""}</button>
       </div>`;
-    if (showReset) $("resetReview").onclick = resetReview;
+    if (marked) $("resetReview").onclick = resetReview;
     $("lockOpen").onclick = () => lockModal();
     return;
   }
@@ -619,18 +695,39 @@ function checksList(item) {
   return out.join("");
 }
 
-function renderCard(root, item, d) {
+/* Fingerprint of everything the card displays + its stage state. diffQueue
+   compares it per card: a changed fingerprint is the ONLY reason to rebuild
+   that card (a mark flip, a revised text, a re-pushed mockup). */
+function cardFp(item, d) {
+  const u = item.username || "";
+  const st = d.stg.get(u);
+  return JSON.stringify([
+    u, item.full_name, item.email_address, item.stats || "", item.email_source || "",
+    item.research_confidence || "", !!item.revised, item.revisedAt || "",
+    item.updated_at || "", item.image_status || "", item.external_url || "",
+    item.subject || "", item.body || "",
+    item.attachment ? [!!item.attachment.present, item.attachment.bytes || 0] : [false, 0],
+    item.bio ? JSON.stringify(item.bio) : "",
+    item.facts_cited || "",
+    item.checks ? JSON.stringify(item.checks) : "",
+    st ? st.choice : "",
+    !!state.batch, // the wait chip / suppressed actions depend on the GLOBAL
+                   // batch flag — a lock must rebuild every card, not just the
+                   // one whose own fields moved
+  ]);
+}
+
+function cardHtml(item, d) {
   const u = item.username || "";
   const stagedMark = d.stg.get(u);
   const batching = !!state.batch; // during delivery the review is inert by design
-  const el = document.createElement("article");
-  el.className = "card";
-  el.id = "card-" + esc(u);
   const acts = batching ? "" : actionsHtml(item, u, stagedMark);
   const mockNote = item.attachment && item.attachment.present
     ? `<div class="none">chargement du visuel…</div>` // holder keeps the reserved aspect-ratio box
     : `<div class="none">pas de maquette jointe à cet email</div>`;
-  el.innerHTML = `
+  // the staged chip lives in .actions (below), NOT in .badges — a mark must
+  // never wrap the badges row and grow the card
+  return `
     <div class="card-top">
       <div class="avatar">${esc((u[0] || "?").toUpperCase())}</div>
       <div class="who">
@@ -644,11 +741,7 @@ function renderCard(root, item, d) {
     </div>
     <div class="inner">
       <div class="badges">
-        ${batching
-          ? `<span class="stag wait">⏳ lot en cours — pas dans ce round</span>`
-          : stagedMark
-            ? `<span class="stag ${stagedMark.choice === "approved" ? "appr" : "rej"}">${stagedMark.choice === "approved" ? "✓ approuvé pour le lot" : "✗ rejeté (au verrouillage)"}</span>`
-            : ""}
+        ${batching ? `<span class="stag wait">⏳ lot en cours — pas dans ce round</span>` : ""}
         ${badges(item)}
       </div>
       ${bioHtml(item)}
@@ -661,21 +754,58 @@ function renderCard(root, item, d) {
       <div class="checks">${checksList(item)}</div>
     </div>
     ${acts ? `<div class="actions">${acts}</div>` : ""}`;
-  root.appendChild(el);
+}
 
+function mountCard(root, item, d) {
+  const el = document.createElement("article");
+  el.className = "card";
+  el.id = "card-" + esc(item.username || "");
+  el.dataset.u = item.username || "";
+  el.innerHTML = cardHtml(item, d);
+  root.appendChild(el);
+  el._fp = cardFp(item, d);
+  bindCard(el, item);
+}
+
+/* Swap one card's content in place. The previous .mockin holder (which may
+   carry a decoded <img> blob) is transplanted into the fresh DOM so the
+   picture never re-decodes nor flickers on a mark flip / revise. */
+function rebuildCard(el, item, d) {
+  const oldHolder = el.querySelector(".mockin");
+  el.innerHTML = cardHtml(item, d);
+  const fresh = el.querySelector(".mockin");
+  if (oldHolder && fresh) fresh.replaceWith(oldHolder);
+  el._fp = cardFp(item, d);
+  bindCard(el, item);
+}
+
+function bindCard(el, item) {
+  const u = item.username || "";
   const a = el.querySelector('[data-act="rej"]');
   if (a) a.onclick = () => stage(u, "rejected");
   const ed = el.querySelector('[data-act="edit"]');
   if (ed) ed.onclick = () => reviseModal(item);
   const ap = el.querySelector('[data-act="appr"]');
   if (ap) ap.onclick = () => stage(u, "approved");
+  // a stage POST is in flight for this user — keep the buttons inert until it
+  // lands; only buttons WE disable get flagged, so stage()'s release pass can
+  // never lift a markup-level disabled state (e.g. edit-on-a-marked-card)
+  if (busyUsers.has(u))
+    for (const b of el.querySelectorAll(".actions .btn"))
+      if (!b.disabled) { b.disabled = true; b.dataset.busyWait = "1"; }
 }
 
 function actionsHtml(item, u, stagedMark) {
   const on = stagedMark && stagedMark.choice === "approved";
   const onR = stagedMark && stagedMark.choice === "rejected";
   const stagedTitle = "Désélectionner cette carte (elle redevient sans marque)";
-  return `
+  // stage chip prefixed INTO the action row (margin-right:auto pins it left):
+  // a mark changes text on a fixed-height row, never the card's height
+  const chip = stagedMark
+    ? `<span class="stag ${stagedMark.choice === "approved" ? "appr" : "rej"} in-actions">` +
+      `${stagedMark.choice === "approved" ? "✓ approuvé pour le lot" : "✗ rejeté (au verrouillage)"}</span>`
+    : "";
+  return chip + `
     <button class="btn reject ${onR ? "on" : ""}" data-act="rej" title="${onR ? stagedTitle : "Marquer rejeté — aucun email ne partira pour ce prospect"}"
       ${onR ? `aria-pressed="true"` : ""}>${onR ? "✗ rejeté — retirer" : "✗ Rejeter"}</button>
     <button class="btn edit" data-act="edit" ${stagedMark ? "disabled title=\"Retirez d'abord la marque ✓/✗ pour pouvoir modifier\"" : ""}>Modifier${stagedMark ? " (retirez la marque)" : ""}</button>
@@ -724,8 +854,10 @@ function scheduleImages() {
     if (!holder) continue;
     const c = imgCache.get(u);
     if (c) {
-      // every render() rebuilds the holders — a cached blob must be put
-      // straight back in, or the fresh placeholder would stay blank forever
+      // the diff render transplants painted holders — an <img> already in the
+      // holder must NOT be touched (no re-decode, no flicker). A fresh holder
+      // (newly mounted card) still gets its cached blob put straight in.
+      if (c.url && holder.querySelector("img")) continue;
       if (c.url) fillImage(u, holder, c);
       continue;                             // absent or in flight: leave the placeholder
     }
@@ -796,16 +928,34 @@ function pruneImgCache() {
 
 /* ---------- staging ---------- */
 async function stage(username, choice) {
+  reviewWriteQuiet = performance.now() + 600; // this POST's load() is authoritative — silence the poll
+  busyUsers.add(username);
+  // keep THIS card's buttons inert until the POST lands — a double click or
+  // an overlapping poll can no longer un-mark the card meanwhile
+  for (const b of document.querySelectorAll(`#queue article[data-u="${CSS.escape(username)}"] .actions .btn`)) {
+    if (!b.disabled) { b.disabled = true; b.dataset.busyWait = "1"; }
+  }
   try {
     await api("/api/stage", { username, choice });
     await load();
   } catch (e) {
     toast(e.message, "err");
+    await load(); // 409 etc. — resync authoritatively from the server
+  } finally {
+    busyUsers.delete(username);
+    reviewWriteQuiet = performance.now() + 600;
+    // the load() above rebuilt the card with its real state — release only the
+    // buttons WE disabled (markup-level disabled states keep their truth)
+    for (const b of document.querySelectorAll(`#queue article[data-u="${CSS.escape(username)}"] .actions .btn[data-busy-wait]`)) {
+      b.disabled = false;
+      delete b.dataset.busyWait;
+    }
   }
 }
 
 async function resetReview() {
   if (!confirm("Retirer toutes les marques ✓/✗ ? Les cartes redeviennent sans marque (rien n'est encore décidé).")) return;
+  reviewWriteQuiet = performance.now() + 600;
   try {
     const r = await api("/api/stage", { reset: true }); // one atomic call server-side
     await load();
@@ -858,6 +1008,7 @@ function lockModal() {
     const reasonEl = $("lockRejectReason");
     const payload = { confirm: ph.value.trim() };
     if (rejectedN && reasonEl) payload.rejectReason = reasonEl.value.trim();
+    reviewWriteQuiet = performance.now() + 600;
     api("/api/lock", payload)
       .then((r) => {
         const m = r.batch.items.length;
@@ -889,6 +1040,7 @@ function reviseModal(item) {
     }
     go.disabled = true;
     $("revMsgs").innerHTML = '<div class="info">Le rédacteur réécrit l\'email (quelques secondes)…</div>';
+    reviewWriteQuiet = performance.now() + 600;
     api("/api/revise", { username: item.username, instruction })
       .then(() => {
         toast("Email réécrit — relisez puis marquez la carte", "ok");
@@ -1179,6 +1331,7 @@ setInterval(() => {
   if (!TOKEN) return;
   if (document.hidden) return;
   if (performance.now() - lastScrollAt < 600) return;
+  if (performance.now() < reviewWriteQuiet) return; // a review write just landed — its load() is authoritative
   const open = [...document.querySelectorAll(".modal-back.on")];
   if (open.length) return;
   if (pane === "kpis") loadKpis();

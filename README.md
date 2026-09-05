@@ -55,15 +55,24 @@ secrets GitHub. Le code déployé vient de
    (`via: batch`). Tu peux fermer le navigateur. La console affiche la
    progression (`Lot en cours — 2/5 envoyés · prochain envoi vers 14:05`).
    Un tick manqué est rattrapé au tick suivant (auto-réparation) ; un double
-   tick est inoffensif (chaque envoi est protégé par un claim). Pour faire
-   partir un email **immédiatement** sans attendre le prochain tick : bouton
-   « Run workflow » sur GitHub, ou `gh workflow run send-due.yml` (dépôt
+   tick est inoffensif (chaque envoi est protégé par un claim). Un envoi qui
+   échoue en SMTP est retenté par les ticks suivants jusqu'à
+   `FORGE_BATCH_MAX_TRIES` (défaut 3) puis **dead-letté** (cf. *Dead-letter
+   SMTP* ci-dessous) — le lot continue, une adresse en échec permanent ne le
+   gèle plus jamais. Pour faire partir un email **immédiatement** sans
+   attendre le prochain tick : bouton « Run workflow » sur GitHub, ou
+   `gh workflow run send-due.yml` (dépôt
    `analysemarket705-prog/forge-send-console`) — à relancer par email à
    envoyer si les ticks tardent.
 5. **Récupère les décisions** quand le lot est terminé (`--send-pull`) : les
    mds portent `status: sent` (`sent_at`, texte exact envoyé — syncé dans la
-   section `## Email draft` si l'email avait été modifié) ou
-   `rejected_manual` (raison dans `error`), et la console est vidée.
+   section `## Email draft` si l'email avait été modifié),
+   `rejected_manual` (raison dans `error`) ou `send_failed` (dead-letter
+   SMTP — jamais livré), et la console est vidée. En direct, chaque carte
+   quitte la revue dès sa décision : pendant la livraison les cartes
+   envoyées n'ont plus que la barre de progression du lot, et l'onglet
+   **Terminés** garde la liste (sujet + adresse tant que les décisions ne
+   sont pas rapatriées, lignes KPI ensuite).
 
 ## Workflow (une fois déployé)
 
@@ -92,9 +101,11 @@ Détails utiles :
 - `--send-push` **refuse** de pousser tant que des décisions ne sont pas
   récupérées **ou** qu'une revue (marques) / un lot est en cours.
 - Après le pull, les mds portent `status: sent` (`sent_at` renseigné — jamais
-  re-queue) ou `rejected_manual` (raison dans `error`). Le
-  `outreach/contact_ledger.csv` est régénéré automatiquement : le verdict
-  reste enregistré même si un md est supprimé.
+  re-queue), `rejected_manual` (raison dans `error`) ou `send_failed`
+  (dead-letter SMTP, cf. ci-dessous). Le `outreach/contact_ledger.csv` est
+  régénéré automatiquement : le verdict reste enregistré même si un md est
+  supprimé — **sauf `send_failed`, volontairement non terminal** : rien n'a
+  jamais été reçu, si le md disparaît la personne redevient contactable.
 - **Le md = ce qui est réellement parti.** La décision `sent` enregistre le
   texte exact (sujet + corps) ; si l'email a été modifié sur la console, le
   pull réécrit la section `## Email draft` du md avec ce texte avant
@@ -104,10 +115,45 @@ Détails utiles :
   `-Ronan Delerue` + `Forge — https://forgefitapp.co/` — comme
   `ensure_house_rules` côté writer local. Une révision est marquée sur la
   carte (`✏️ modifié`) et gelée telle quelle dans le lot au verrouillage.
+  Le SYSTEM du Modifier reflète aussi l'offre 30/70 du writer (`agents/
+  email_contact_writer.py` `FORGE_OFFER`) : gratuit au démarrage, Forge
+  prend 30 % des revenus de l'app, le créateur garde 70 % — si une
+  réécriture touche à l'argent, elle doit citer ces chiffres explicites.
+  (Deux sources vivantes pour la même phrase d'offre — les garder synchro.)
 - La console terminale (`python run_forge_outreach.py --send`) reste
   disponible — c'est l'autre chemin d'envoi, avec confirmation par adresse
   tapée par email. Le lot web et la console terminale partagent le même
   format de décision dans les mds.
+
+## Dead-letter SMTP (`send_failed`)
+
+Un email du lot qui échoue en SMTP est retenté par les ticks suivants (rien
+n'est enregistré, réponse 502, réessai naturel). Chaque tentative incrémente
+`tries` ; au plafond `FORGE_BATCH_MAX_TRIES` (env Vercel, défaut 3 — la
+dead-letter tombe au 3e tick d'échec : ~15-30 min quand les ticks arrivent
+toutes les 5-10 min, plus longtemps quand GitHub tarde — mais toujours
+bornée, jamais infinie), l'item est
+**dead-letté dans le même verrou que la relecture** : décision
+`{action: "failed", tries, detail}` — volontairement **sans sujet, corps ni
+tk** (rien n'est parti : rien à synchroniser, rien à tracker) — statut de
+l'item `failed`, réponse 200 (le tick ne logue pas d'erreur). Le lot continue
+au tick suivant : une adresse en échec permanent ne peut plus geler tout le
+lot ni la console (lock/clear/push redeviennent possibles une fois les
+décisions rapatriées).
+
+`--send-pull` écrit `status: send_failed` dans le md (l'en-tête du record dit
+« SMTP send FAILED — email NOT sent to … » ; le champ `error` garde
+« SMTP send failed after N attempts on the web console (batch): … ») — le
+prospect n'est **pas** scellé au ledger (verdict machine, pas un « ne jamais
+contacter » humain) : corrige l'adresse dans le md, puis re-tente via la
+console terminale (`--send --include-rejected`).
+
+Sans tracking par conception : `failed` viole l'invariant « décision ⇒
+tracking » — tous les consommateurs sont gatés sur l'événement `sent` (le
+heal ne converge vers `sent` que depuis une décision `action: sent`, les KPIs
+ne plient que les envois réels). Une décision `failed` n'apparaît jamais dans
+l'onglet KPIs ; dans l'onglet **Terminés**, elle porte le badge
+« ✗ ÉCHEC SMTP — N essais ».
 
 ## Le calendrier : GitHub Actions (`forge-send-due`)
 
@@ -170,7 +216,10 @@ l'agent writer local et le chemin terminal (`--send`, console locale) ne sont
 pipeline que la décision (la décision en dernier — si elle existe, le
 tracking existe). **Jamais d'IP ni d'User-Agent stockés.** Un crash entre le
 SMTP et le pipeline est réparé par le heal idempotent du chemin
-prior-decision (le `tk` est relu dans le corps de la décision).
+prior-decision (le `tk` est relu dans le corps de la décision) — le heal ne
+converge vers `sent` que si la décision relue est bien `action: sent` ; une
+décision `failed` (pas de tk) laisse l'item sur `failed` (cf. *Dead-letter
+SMTP*).
 
 **Endpoints** :
 
@@ -193,6 +242,18 @@ fusionne dans un fichier existant ; la route d'envoi immédiat `POST /api/decide
 et une ligne par prospect tracké avec le sélecteur de réponse. Les données
 commencent au déploiement : les envois d'avant (premier lot, console locale)
 n'ont pas de tracking.
+
+**Onglet Terminés** (Terminés / Historique dans le code) : la trace des
+cartes qui ont quitté la revue. Tant que des décisions ne sont pas
+rapatriées, il liste les décisions du dernier lot — prospect, action
+(`✓ ENVOYÉ` / `✗ rejeté` / `✗ ÉCHEC SMTP — N essais`), quand, vers quelle
+adresse, sujet (badge « ✏️ modifié » si l'email avait été révisé),
+détail/raison. Après `--send-pull`, les décisions sont vidées et l'onglet
+retombe sur les lignes KPI (prospect | envoyé | ouverture | clics | réponse)
+— le tracking ne stocke ni sujet ni adresse par conception, ils
+disparaissent donc au retour local (limite honnête, rappelée dans
+l'onglet). Les envois faits depuis la console terminale (`--send`) n'y
+apparaissent jamais : leur trace est le md `outreach/<username>.md`.
 
 **« C'était moi »** — le pixel et le clic ne portent aucune identité (aucune
 IP/UA stockée, par conception) : impossible de distinguer une ouverture du
@@ -253,6 +314,7 @@ note `UPSTASH_REDIS_REST_URL` et `UPSTASH_REDIS_REST_TOKEN`.
 | `FORGE_CONSOLE_TOKEN` | `<à générer>` — **identique** au secret GitHub et au `FORGE_CONSOLE_TOKEN` du `.env` local ; le navigateur le demande une fois par navigateur (retenu en `localStorage` — même jeton, jamais retapé) |
 | `DEEPSEEK_API_KEY` | la clé DeepSeek du `.env` local — nécessaire au bouton **Modifier** (`api/revise.js` appelle l'agent writer depuis le serveur). Sans elle : 500 « modifier cannot run ». Modèles/endpoint surchargeables via `FORGE_REVISE_MODEL` / `FORGE_REVISE_BASE` |
 | `FORGE_TRACK_BASE` | `https://go.forgefitapp.co` — l'origine des liens de tracking réécrits dans chaque email (pixel + clic). Surchargeable pour un test local ; sans elle, les liens pointent vers `go.forgefitapp.co` par défaut |
+| `FORGE_BATCH_MAX_TRIES` | (optionnel, défaut `3`) — essais SMTP maximum par item avant dead-letter `failed`. Plus bas = lot plus réactif ; plus haut = plus tolérant aux pannes SMTP brèves |
 
 Cocher **Production** (et Preview si tu veux tester sur les URLs de preview).
 Valeurs réelles du SMTP : uniquement dans les secrets Vercel + le `.env`
@@ -297,6 +359,27 @@ python run_forge_outreach.py --send-push             # pousse les drafts en atte
 python run_forge_outreach.py --send-pull             # no-op (aucune décision)
 ```
 
+Smoke de la revue vivante et de l'historique (rien ne part, aucune carte
+marquée n'est verrouillée) :
+
+- marque 2 cartes puis **↺ réinitialiser la revue** : les marques disparaissent
+  et l'onglet Réseau du navigateur montre **un seul** appel
+  `POST /api/stage {"reset": true}` (le reset est atomique côté serveur — pas
+  un reset par carte) ;
+- l'onglet **Terminés** retombe sur les lignes KPI tant qu'aucune décision
+  n'existe (« Aucun envoi suivi » avant le premier lot verrouillé), puis
+  n'évolue qu'avec de vraies décisions (envoyé/rejeté) — le cas
+  « ✗ ÉCHEC SMTP » se voit en conditions réelles quand une adresse échoue
+  après `FORGE_BATCH_MAX_TRIES` ;
+- laisse la page ouverte 30 s sans rien toucher : le poll ne doit pas bouger
+  le scroll ni faire re-télécharger les mockups (onglet Réseau : un seul
+  `GET /api/image` par carte sur plusieurs polls — c'est le cache par
+  username) ;
+- pendant la livraison d'un lot réel, les cartes envoyées quittent la revue
+  en direct (elles ne réapparaissent qu'en Terminés), et les cartes non
+  marquées n'offrent plus d'actions — elles reviennent au round suivant
+  après `--send-pull`.
+
 Un envoi réel ne part qu'après un verrouillage `ENVOYER N` tapé à la main,
 puis un tick du cron (ou `gh workflow run send-due.yml` pour le premier
 email immédiatement). Pour un test d'envoi complet sans destinataire réel :
@@ -327,8 +410,9 @@ pull — puis remets l'adresse réelle.
   Un verrouillage au mauvais nombre ou à la mauvaise phrase répond 400.
 - **Une décision par prospect, un lot à la fois** : un prospect déjà décidé,
   marqué, ou verrouillé dans un lot actif répond 409 à `stage`/`revise`/
-  `decide`/un nouveau `lock` — un double envoi est impossible même avec deux
-  onglets ouverts (le serveur garde l'historique).
+  un nouveau `lock` (l'ancienne route `/api/decide` n'existe plus — 404) —
+  un double envoi est impossible même avec deux onglets ouverts (le serveur
+  garde l'historique).
 - **Le lot gèle le texte** : l'envoi lit le snapshot du lot, plus jamais la
   file — un `--send-push` concurrent ne peut pas changer ce qui a été
   verrouillé.
@@ -336,8 +420,11 @@ pull — puis remets l'adresse réelle.
   par `/api/senddue` (donc par le cron) avec le secret du lot ; un claim
   `SET NX` par prospect dédoublonne les ticks qui se chevauchent, et la
   décision `sent` est enregistrée **avant** la mise à jour du statut (un
-  crash entre les deux est réparé par le tick suivant). SMTP en échec = rien
-  d'enregistré + réponse 502 → le tick suivant réessaie naturellement.
+  crash entre les deux est réparé par le tick suivant). SMTP en échec :
+  sous `FORGE_BATCH_MAX_TRIES`, rien d'enregistré + réponse 502 → le tick
+  suivant réessaie ; au plafond, **dead-letter** dans le même verrou
+  (décision `failed` sans texte ni tk + statut `failed` + réponse 200) → le
+  lot continue (cf. *Dead-letter SMTP*).
 - **Secrets côté serveur uniquement** : le binaire client n'a jamais vu le
   mot de passe SMTP ; la b64 du mockup est stockée au moment du push dans le
   KV et supprimée au pull (le pull refuse de vider la console tant que le
