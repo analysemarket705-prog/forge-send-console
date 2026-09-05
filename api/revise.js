@@ -41,7 +41,7 @@ HOUSE RULES (never violated):
 You answer ONLY with a JSON object: {"subject": "...", "body": "..."} — the \
 complete rewritten email, no preamble.`;
 
-const USER = (item, instruction) => `REWRITE this Forge outreach email following the reviewer's \
+const USER = (item, instruction, attempt) => `REWRITE this Forge outreach email following the reviewer's \
 instruction. Preserve the recipient identity, the mockup mention if present, and all facts unless \
 the instruction overrides them.
 
@@ -53,7 +53,11 @@ ${item.body}
 THE REVIEWER'S INSTRUCTION (rewrite accordingly):
 ${instruction}
 
-Reply with the JSON object only.`;
+Reply with the JSON object only.${attempt === 0 ? "" : `
+
+NOTE (attempt ${attempt + 1}): your previous revision was byte-identical to the email above. The \
+reviewer explicitly asked for a change — rewrite the flagged part(s) with genuinely different \
+wording, and return the complete revised email.`}`;
 
 export function enforceHouseRules(subject, body) {
   let s = String(subject || "").trim().replace(/^\s*\[?\s*[Pp]artnership\s*\]?\s*[:—-]?\s*/, "");
@@ -66,24 +70,13 @@ export function enforceHouseRules(subject, body) {
   return { subject, body };
 }
 
-export async function reviseEmail(item, instruction) {
-  const key = process.env.DEEPSEEK_API_KEY || "";
-  if (!key) {
-    const err = new Error("server env DEEPSEEK_API_KEY is not set — the modifier cannot run");
-    err.missingEnv = true;
-    throw err;
-  }
-  const base = (process.env.FORGE_REVISE_BASE || "https://api.deepseek.com").replace(/\/$/, "");
-  const model = process.env.FORGE_REVISE_MODEL || "deepseek-chat";
+async function callModel(key, base, model, messages) {
   const res = await fetch(`${base}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: USER(item, instruction) },
-      ],
+      messages,
       response_format: { type: "json_object" },
       temperature: 0.7,
       max_tokens: 1500,
@@ -97,8 +90,44 @@ export async function reviseEmail(item, instruction) {
   const data = await res.json();
   const content = data?.choices?.[0]?.message?.content || "";
   const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  const parsed = JSON.parse(cleaned); // throws -> 502 below
-  return enforceHouseRules(parsed.subject, parsed.body);
+  return JSON.parse(cleaned); // throws -> 502 below
+}
+
+// Observed: deepseek-chat sometimes returns the CURRENT email byte-identical
+// (~1 draw in 3 with a declarative instruction like "the intro is bad") — the
+// reviewer would see "modifié" with zero change. Retry up to 2 times with a
+// nudge; only a genuinely different text counts as a revision, and an
+// exhausted model fails loudly (502) instead of silently no-op'ing.
+const MAX_ATTEMPTS = 3;
+
+export async function reviseEmail(item, instruction) {
+  const key = process.env.DEEPSEEK_API_KEY || "";
+  if (!key) {
+    const err = new Error("server env DEEPSEEK_API_KEY is not set — the modifier cannot run");
+    err.missingEnv = true;
+    throw err;
+  }
+  const base = (process.env.FORGE_REVISE_BASE || "https://api.deepseek.com").replace(/\/$/, "");
+  const model = process.env.FORGE_REVISE_MODEL || "deepseek-chat";
+  const messages = [
+    { role: "system", content: SYSTEM },
+    { role: "user", content: "" }, // per-attempt below
+  ];
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    messages[1] = { role: "user", content: USER(item, instruction, attempt) };
+    const parsed = await callModel(key, base, model, messages);
+    const revised = enforceHouseRules(parsed.subject, parsed.body);
+    const sameSubject = revised.subject === item.subject;
+    const sameBody = revised.body === item.body;
+    if (!sameSubject || !sameBody) return revised;
+  }
+  const err = new Error(
+    "the writer returned the email unchanged "
+    + `${MAX_ATTEMPTS} times — the instruction may be too vague to act on. `
+    + "Rephrase what should change concretely (e.g. \"raccourcis l'introduction de moitié\") and retry."
+  );
+  err.unchanged = true;
+  throw err;
 }
 
 export default async function handler(req, res) {
