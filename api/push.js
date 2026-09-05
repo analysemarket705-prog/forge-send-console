@@ -4,6 +4,11 @@
 //   - queue items are stored WITHOUT their attachment b64 (kept lean);
 //     each image is stored under its own forge:img:<username> key
 //     (KV value-size limits make one-key-per-user mandatory);
+//   - images are uploaded separately, ONE per POST /api/image (a single
+//     request carrying every base64 exceeds the Vercel function body cap
+//     → HTTP 413). Queue items announce those uploads with
+//     attachment.present = true (no b64); inline b64 still works — the
+//     image is registered/kept either way;
 //   - the forge:decisions list is cleared, so a validation can never be
 //     re-decided or double-sent from a stale queue;
 //   - image keys for usernames no longer in the queue are purged.
@@ -61,6 +66,9 @@ export default async function handler(req, res) {
   }
 
   // Strip image payloads into per-user KV keys; keep a lean queue item.
+  // The image may already live in the KV (uploaded via POST /api/image,
+  // announced by present:true) or arrive inline below as b64 — registered
+  // either way, so pre-uploaded images are never purged as stale.
   const clean = [];
   const imgUsers = [];
   for (const item of items) {
@@ -68,20 +76,19 @@ export default async function handler(req, res) {
     const c = { ...item };
     const att = c.attachment;
     const b64 = att && typeof att.b64 === "string" ? att.b64 : "";
+    const hasImg = Boolean(b64) || att.present === true;
     c.attachment = {
       filename: (att && att.filename) || "app-preview.png",
-      present: Boolean(b64),
-      bytes: b64 ? Math.round((b64.length * 3) / 4) : 0,
+      present: hasImg,
+      bytes: b64 ? Math.round((b64.length * 3) / 4) : (att && att.bytes) || 0,
     };
-    if (b64) {
-      if (b64.length > MAX_B64) {
-        return json(res, 400, {
-          error: `image for ${item.username} is ${(b64.length / 1000) | 0} KB of base64 — `
-               + `over the ${(MAX_B64 / 1000) | 0} KB cap. Re-run --send-push from a machine with Pillow.`,
-        });
-      }
-      imgUsers.push(item.username);
+    if (b64 && b64.length > MAX_B64) {
+      return json(res, 400, {
+        error: `image for ${item.username} is ${(b64.length / 1000) | 0} KB of base64 — `
+             + `over the ${(MAX_B64 / 1000) | 0} KB cap. Re-run --send-push from a machine with Pillow.`,
+      });
     }
+    if (hasImg) imgUsers.push(item.username);
     clean.push(c);
   }
 

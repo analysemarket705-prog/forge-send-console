@@ -18,7 +18,10 @@ secrets GitHub. Le code déployé vient de
 
 1. **Pousse** les drafts + mockups en file (`--send-push`) : chaque carte
    arrive avec la bio du prospect, l'email complet, la maquette, la checklist
-   pré-vol.
+   pré-vol. Chaque mockup part par **un `POST /api/image`** (une requête par
+   image — un seul POST embarquant ~16 × 300 KB de base64 dépasserait le
+   plafond de corps de fonction Vercel → 413), puis la file est poussée
+   allégée (sans base64, `present: true`).
 2. **Marque chaque carte** dans le navigateur :
    - `✓ Valider` → la carte partira au verrouillage ;
    - `✗ Rejeter` → le prospect ne sera jamais contacté (raison facultative,
