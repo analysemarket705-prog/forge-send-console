@@ -815,7 +815,7 @@ function renderKpis(data) {
       const sel = wrap.querySelector(`select[data-u="${CSS.escape(u)}"]`);
       b.disabled = true;
       try {
-        const r = await api("/api/reply", { username: u, outcome: sel.value });
+        const r = await api("/api/kpi", { username: u, outcome: sel.value });
         toast(r.outcome ? `Réponse ${REPLY_LABELS[r.outcome] || r.outcome} enregistrée pour ${u}` : `Marque de réponse retirée pour ${u}`, "ok");
         await loadKpis();
       } catch (e) {

@@ -176,7 +176,14 @@ prior-decision (le `tk` est relu dans le corps de la décision).
 | `GET /api/pix?tk=…` | **aucune** | pixel d'ouverture : 200 `image/gif` 42 octets toujours (tk mort inclus) + événement `open` si le tk est connu |
 | `GET /api/r?tk=…` | **aucune** | clic : 302 vers le site toujours (tk mort inclus) + événement `click` si connu |
 | `GET /api/kpi` | token | agrège opens/clics/réponses par prospect + totaux (voir l'onglet) |
-| `POST /api/reply` | token | marque une réponse `{username, outcome: positive\|neutral\|negative\|bounce}` — **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque |
+| `POST /api/kpi` | token | marque une réponse `{username, outcome: positive\|neutral\|negative\|bounce}` — **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque |
+
+Le marquage de réponse est un `POST` sur `/api/kpi` (et non une route séparée)
+parce que le plan Hobby plafonne les fonctions serverless à 12 par
+déploiement — chaque fichier de `api/` est une fonction (les fichiers sans
+`export default`, comme `_lib.js`, ne comptent pas). Tout nouvel endpoint se
+fusionne dans un fichier existant ; la route d'envoi immédiat `POST /api/decide`
+(ancienne console) a été supprimée dans la même passe — 404.
 
 **Onglet KPIs** (header de la console) : totaux (envoyés, ouverts — comptés
 « ≥ 1 ouverture + délai de première ouverture » —, clics, réponses par issue)
@@ -327,7 +334,7 @@ pull — puis remets l'adresse réelle.
   endpoints est le `tk` lui-même — 24 hex aléatoires par envoi, inestimables
   par un tiers (et morts au bout de 90 j). Aucune requête ne stocke d'IP ni
   d'User-Agent ; un `tk` inconnu reçoit le même 200/302 qu'un bon (aucun
-  oracle). Seul `/api/kpi` et `/api/reply` sont sous token — les réponses ne
+  oracle). Seul `/api/kpi` (GET et POST) est sous token — les réponses ne
   peuvent être marquées que par quelqu'un qui a le token console.
 - **Le md ≠ lien de tracking** : la réécriture mécanique (URL de signature →
   tracker) n'est pas une édition humaine. Un envoi non modifié garde dans son
