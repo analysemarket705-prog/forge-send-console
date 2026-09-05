@@ -33,6 +33,9 @@
                    padding: 4px 12px; font-size: 13px; }
   .summary .chip b { font-weight: 650; }
   .summary .chip.hot { border-color: var(--red); color: var(--red); }
+  .chip.link, .decision-tag.link { cursor: pointer; }
+  .chip.link:hover { border-color: #9b9b90; }
+  .decision-tag.link:hover { text-decoration: underline; }
   /* review / batch bars */
   .bar { background: #fff; border: 1px solid var(--line); border-radius: 12px;
          padding: 10px 14px; margin: 0 0 12px; display: flex; gap: 10px;
@@ -59,8 +62,6 @@
                font: 12px ui-monospace, Menlo, Consolas, monospace; }
   .card { background: #fff; border: 1px solid var(--line); border-radius: 12px;
           margin: 14px 0; overflow: hidden; }
-  .card.decided { opacity: .62; }
-  .card.decided .actions, .card.locked .actions { display: none; }
   .card-top { display: flex; gap: 10px; padding: 14px 16px 0; }
   .avatar { width: 44px; height: 44px; border-radius: 50%; flex: none;
             background: linear-gradient(135deg, var(--red), #ff8a3d);
@@ -84,6 +85,7 @@
   .stag { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 3px 10px; }
   .stag.appr { background: var(--chip-ok); color: var(--ok); }
   .stag.rej { background: var(--chip-warn); color: var(--warn); }
+  .stag.wait { background: var(--chip-blue); color: #1e4f80; }
   .bio { font-size: 13.5px; color: #3d3d35; margin: 0 0 4px; }
   .bio b { color: var(--ink); font-weight: 600; }
   .subject { font-size: 18px; margin: 12px 0 6px; font-weight: 700; }
@@ -92,8 +94,19 @@
           border-radius: 10px; padding: 12px 14px; margin: 8px 0; }
   .mock { margin: 10px 0 4px; }
   .mock .cap { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .mock img { max-width: 100%; border: 1px solid var(--line); border-radius: 10px; display: block; }
-  .mock .none { font-size: 13px; color: var(--muted); font-style: italic; }
+  /* The mockup holder reserves its layout (aspect-ratio below) before the
+     image bytes arrive, so a late image never shifts the page under the
+     reviewer. Once an image has been decoded its real ratio is written
+     inline (aspect-ratio: w/h) and every later render reuses it. */
+  .mock .mockin { position: relative; width: min(100%, 340px); aspect-ratio: 9 / 16;
+                  background: #eceae3; border: 1px solid var(--line); border-radius: 10px;
+                  overflow: hidden; }
+  .mock .mockin img { position: absolute; inset: 0; width: 100%; height: 100%;
+                      object-fit: contain; display: block; }
+  .mock .mockin .none { position: relative; min-height: 130px; height: 100%;
+                        display: flex; align-items: center; justify-content: center;
+                        padding: 12px; text-align: center; font-size: 13px;
+                        color: var(--muted); font-style: italic; }
   details { margin-top: 10px; font-size: 13px; }
   details summary { cursor: pointer; color: var(--muted); }
   details ul { margin: 8px 0 0; padding-left: 20px; color: #3d3d35; }
@@ -119,6 +132,7 @@
                   margin-top: 8px; display: inline-block; }
   .decision-tag.sent { background: var(--chip-ok); color: var(--ok); }
   .decision-tag.rejected_manual { background: var(--chip-warn); color: var(--warn); }
+  .decision-tag.failed { background: var(--chip-stop); color: var(--stop); }
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
   .empty .big { font-size: 42px; }
   /* modal */
@@ -145,18 +159,20 @@
   .locklist .who2 { font-weight: 600; min-width: 150px; word-break: break-word; }
   .locklist .what { color: #3d3d35; min-width: 0; }
   .locklist .when2 { margin-left: auto; white-space: nowrap; color: var(--muted); font-size: 12px; }
-  .busy { opacity: .55; pointer-events: none; }
+  /* A re-render in flight dims the pane but NEVER blocks clicks — buttons
+     disable themselves individually while their own fetch runs. */
+  .busy { opacity: .6; }
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: #14140f; color: #fff; padding: 10px 16px; border-radius: 10px;
            font-size: 14px; z-index: 30; display: none; max-width: 90vw; }
   .toast.err { background: var(--stop); }
   .toast.ok { background: var(--ok); }
-  /* tabs (Revue / KPIs) */
+  /* tabs (Revue / KPIs / Terminés) */
   .tabs { display: flex; gap: 6px; margin: 2px 0 12px; }
   .tab { font: inherit; font-weight: 600; font-size: 13.5px; padding: 7px 14px;
          border-radius: 99px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
   .tab.on { background: #14140f; color: #fff; border-color: #14140f; }
-  /* KPI table */
+  /* KPI + history tables */
   table.kpis { width: 100%; border-collapse: collapse; background: #fff;
                border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13.5px; }
   table.kpis th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
@@ -164,6 +180,8 @@
                   background: #fafaf6; white-space: nowrap; }
   table.kpis td { padding: 9px 10px; border-top: 1px solid #efefe8; vertical-align: top; }
   table.kpis td.kaction { white-space: nowrap; }
+  table.kpis td.subj { max-width: 340px; word-break: break-word; }
+  table.kpis td.det { color: #3d3d35; max-width: 260px; }
   table.kpis select { font: inherit; font-size: 13px; padding: 3px 6px;
                       border: 1px solid var(--line); border-radius: 7px; background: #fff; }
   .kval { font-weight: 700; color: var(--ok); }
@@ -193,6 +211,7 @@
     <div class="tabs">
       <button class="tab on" data-pane="review" type="button">Revue d'envoi</button>
       <button class="tab" data-pane="kpis" type="button">KPIs</button>
+      <button class="tab" data-pane="history" type="button">Terminés</button>
     </div>
 
     <div id="reviewPane">
@@ -207,6 +226,12 @@
       <div class="summary" id="kpiSummary"></div>
       <p class="hint" id="kpiHint"></p>
       <div id="kpiWrap"></div>
+    </div>
+
+    <div id="historyPane" style="display:none;">
+      <div class="summary" id="histSummary"></div>
+      <p class="hint" id="histHint"></p>
+      <div id="histWrap"></div>
     </div>
   </div>
 </main>
@@ -248,8 +273,19 @@ const $ = (id) => document.getElementById(id);
 const API = "";
 let TOKEN = localStorage.getItem("forgeConsoleToken") || "";
 let state = { queue: [], decisions: [], staged: [], batch: null };
-let pane = "review"; // "review" | "kpis" — drives what the poll/refresh buttons fetch
+let pane = "review"; // "review" | "kpis" | "history" — drives what the poll fetches
+// DOM fingerprints: the poll re-renders ONLY when a fingerprint changes, so a
+// quiet console never rebuilds the page (the root cause of the scroll
+// freeze/jump — a full innerHTML rewrite every 20 s).
+let domFp = "";          // review pane DOM <-> session fingerprint
+let domHistMode = "";    // "decisions" | "kpis" — which history renderer is up
+let domHistFp = "";      // history DOM <-> its source fingerprint
+let domKpiFp = "";       // KPIs pane DOM <-> kpi fingerprint
+let busyOps = 0;
+let lastScrollAt = 0;
+window.addEventListener("scroll", () => { lastScrollAt = performance.now(); }, { passive: true });
 
+/* ---------- helpers ---------- */
 async function api(path, body) {
   const opt = { method: body === undefined ? "GET" : "POST", headers: { "x-forge-token": TOKEN } };
   if (body !== undefined) {
@@ -259,12 +295,9 @@ async function api(path, body) {
   const r = await fetch(API + path, opt);
   let data = {};
   try { data = await r.json(); } catch (e) { /* non-JSON */ }
-  // the HTTP status in the message lets load() recognise a 401 (stale console
-  // token) and re-prompt instead of erroring forever with the old token
   if (!r.ok) throw new Error("HTTP " + r.status + ": " + ((data && data.error) || r.statusText || "error"));
   return data;
 }
-
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -285,6 +318,10 @@ function dur(sec) {
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60);
   return h + " h" + (m ? String(m).padStart(2, "0") : "");
 }
+function short(s, n) {
+  s = String(s == null ? "" : s);
+  return s.length > n ? s.slice(0, n) + "…" : s;
+}
 function toast(msg, cls) {
   const t = $("toast");
   t.textContent = msg;
@@ -293,13 +330,24 @@ function toast(msg, cls) {
   clearTimeout(toast._h);
   toast._h = setTimeout(() => (t.style.display = "none"), cls === "err" ? 6000 : 4000);
 }
+function beginBusy() { busyOps++; $("app").classList.add("busy"); }
+function endBusy() { busyOps = Math.max(0, busyOps - 1); if (!busyOps) $("app").classList.remove("busy"); }
+function authOut(e) {
+  // stale console token: re-prompt instead of erroring forever
+  if (String(e.message).includes("401")) {
+    localStorage.removeItem("forgeConsoleToken");
+    TOKEN = "";
+    initToken();
+    return true;
+  }
+  return false;
+}
 
 /* ---------- token gate ---------- */
 function initToken() {
   if (TOKEN) {
     $("app").style.display = ""; $("tokenBox").style.display = "none";
-    switchPane("review"); // never land on KPIs with a fresh login
-    load();
+    switchPane("review"); // never land on KPIs/Terminés with a fresh login
     return;
   }
   $("app").style.display = "none"; $("tokenBox").style.display = "";
@@ -314,20 +362,37 @@ function initToken() {
 }
 
 /* ---------- load + render ---------- */
-async function load() {
-  $("app").classList.add("busy");
+function sessFp(s) {
+  const j = JSON.stringify;
+  return j([
+    s.queue.map((q) => [q.username, (q.email_address || "").length, (q.subject || "").length,
+                        (q.body || "").length, !!q.revised, q.revisedAt || "", q.updated_at || "",
+                        q.image_status || "", (q.attachment && q.attachment.bytes) || 0]),
+    s.decisions.map((d) => [d.username, d.action, d.at]),
+    s.staged.map((x) => [x.username, x.choice]),
+    s.batch ? [s.batch.id, s.batch.items.map((i) => [i.username, i.status, i.tries, (i.error || "").length])] : null,
+  ]);
+}
+async function refreshSession() {
+  beginBusy();
   try {
     state = await api("/api/session");
-    render();
+    pruneImgCache();
+    return true;
   } catch (e) {
-    if (String(e.message).includes("401")) {
-      localStorage.removeItem("forgeConsoleToken");
-      TOKEN = "";
-      initToken();
-    } else toast("Erreur : " + e.message, "err");
+    if (authOut(e)) return false;
+    toast("Erreur : " + e.message, "err");
+    return false;
   } finally {
-    $("app").classList.remove("busy");
+    endBusy();
   }
+}
+async function load() {
+  if (!(await refreshSession())) return;
+  const fp = sessFp(state);
+  if (fp === domFp) return; // nothing changed — keep the DOM exactly as it is (no scroll, no re-decode)
+  domFp = fp;
+  render();
 }
 
 function derive() {
@@ -335,72 +400,127 @@ function derive() {
   const dec = new Map(decisions.map((d) => [d.username, d]));
   const stg = new Map(staged.map((s) => [s.username, s]));
   const bi = new Map(batch ? batch.items.map((i) => [i.username, i]) : []);
-  const undecided = queue.filter((q) => !dec.has(q.username));
-  const missing = [];
-  if (batch) {
-    for (const i of batch.items) {
-      if (dec.has(i.username)) continue;
-      const overdue = !i.published || (Date.now() - new Date(i.scheduleAt).getTime() > 2 * 3600 * 1000);
-      if (overdue) missing.push(i);
-    }
-    missing.sort((a, b) => a.delaySec - b.delaySec);
-  }
+  const visible = queue.filter((q) => !dec.has(q.username) && !bi.has(q.username));
   return {
-    dec, stg, bi,
-    pending: undecided,                       // cards that still show action buttons
-    approved: undecided.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "approved"),
-    rejected: undecided.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "rejected"),
-    untouched: undecided.filter((q) => !stg.has(q.username)),
+    dec, stg, bi, visible,
+    // cards that still show action buttons
+    approved: visible.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "approved"),
+    rejected: visible.filter((q) => stg.get(q.username) && stg.get(q.username).choice === "rejected"),
+    untouched: visible.filter((q) => !stg.has(q.username)),
     sentN: decisions.filter((d) => d.action === "sent").length,
-    batch, missing,
+    rejectedN: decisions.filter((d) => d.action === "rejected_manual").length,
+    failedN: decisions.filter((d) => d.action === "failed").length,
+    batch,
   };
 }
 
 function render() {
-  const { queue, decisions, batch } = state;
   const d = derive();
-  const decidedU = new Set(d.dec.keys());
-  const sent = d.sentN;
-  const rej = decisions.length - sent;
-  const batchSent = batch ? batch.items.filter((i) => d.dec.has(i.username)).length : 0;
+  const { decisions, batch } = state;
+  const anchor = captureAnchor();
+  const batching = !!batch;
+  const batchItems = batch ? batch.items : [];
+  const inBatchN = batchItems.filter((i) => !d.dec.has(i.username)).length;
 
   $("summary").innerHTML =
-    `<span class="chip">En attente : <b>${queue.filter((q) => !decidedU.has(q.username)).length}</b></span>` +
+    `<span class="chip">À revoir : <b>${d.visible.length}</b></span>` +
     `<span class="chip">✓ approuvés : <b>${d.approved.length}</b></span>` +
     `<span class="chip">✗ rejetés : <b>${d.rejected.length}</b></span>` +
+    (batching ? `<span class="chip">⏳ dans le lot : <b>${inBatchN}</b> en livraison</span>` : "") +
     (decisions.length
-      ? `<span class="chip hot">Décisions à reprendre — envoyés : <b>${sent}</b> · rejetés : <b>${rej}</b></span>`
+      ? `<span class="chip hot link" title="Voir le détail (sujet, adresse, raison) dans l'onglet Terminés" ` +
+        `onclick="switchPane('history')">Décisions : <b>${d.sentN}</b> envoi` + (d.sentN > 1 ? "s" : "") +
+        ` · <b>${d.rejectedN}</b> rejet` + (d.rejectedN > 1 ? "s" : "") +
+        (d.failedN ? ` · <b>${d.failedN}</b> échec SMTP` : "") + " → Terminés</span>"
       : "");
 
   renderBars(d);
   renderHint(d);
 
+  // decision chips stay as a quick glance; the full list lives in Terminés
   const decidedBox = $("decided");
   decidedBox.innerHTML = decisions.length ? decisions.map((dd) => {
-    const tag = dd.action === "sent" ? "sent" : "rejected_manual";
-    const lbl = dd.action === "sent" ? "ENVOYÉ" : "rejeté";
-    return `<span class="decision-tag ${tag}" title="${esc(dd.reason || dd.detail || "")}">` +
-      `${esc(dd.username)} — ${lbl} ${when(dd.at)}</span> `;
+    const tag = dd.action === "sent" ? "sent" : dd.action === "failed" ? "failed" : "rejected_manual";
+    const lbl = dd.action === "sent" ? "ENVOYÉ" : dd.action === "failed" ? "ÉCHEC SMTP" : "rejeté";
+    return `<span class="decision-tag ${tag} link" title="${esc(dd.reason || dd.detail || "")} — voir Terminés" ` +
+      `onclick="switchPane('history')">${esc(dd.username)} — ${lbl} ${when(dd.at)}</span> `;
   }).join("") : "";
 
-  const qb = $("queue");
-  if (!queue.length) {
-    qb.innerHTML = `<div class="empty"><div class="big">📭</div>Rien en attente.<br>` +
-      `<span style="font-size:13px;">Poussez la file : <code>python run_forge_outreach.py --send-push</code></span></div>`;
-    return;
+  renderQueue(d);
+
+  pruneImgCache();
+  restoreAnchor(anchor);
+}
+
+/* keep the reviewer's place in the scroll: an anchor element (the batch bar
+   or the first visible card) is remembered before the rebuild and the window
+   is nudged by the exact delta afterwards. Cards that were sent away are
+   simply gone — the anchor falls back to the first remaining card. */
+function captureAnchor() {
+  const vh = window.innerHeight;
+  const cands = [$("bars")];
+  for (const c of document.querySelectorAll("#queue article")) cands.push(c);
+  for (const el of cands) {
+    if (!el || !el.isConnected) continue;
+    const r = el.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < vh * 0.5) return { id: el.id, top: r.top };
   }
+  return null;
+}
+function restoreAnchor(a) {
+  if (!a) return;
+  const el = document.getElementById(a.id);
+  const next = el || document.querySelector("#queue article");
+  if (!next) return;
+  window.scrollBy(0, next.getBoundingClientRect().top - a.top);
+}
+
+function renderQueue(d) {
+  const qb = $("queue");
+  const v = d.visible;
+  if (!v.length) { qb.innerHTML = emptyStateHtml(d); return; }
   qb.innerHTML = "";
-  for (const item of queue) renderCard(qb, item, d);
-  for (const item of queue) loadImage(item.username);
+  for (const item of v) renderCard(qb, item, d);
+  scheduleImages();
+}
+
+function emptyStateHtml(d) {
+  const { queue, batch, decisions } = state;
+  const items = batch ? batch.items : [];
+  const pendingN = items.filter((i) => !d.dec.has(i.username)).length;
+  const sents = d.sentN, fails = d.failedN;
+  const code = (c) => `<code>${c}</code>`;
+  if (!queue.length) {
+    return `<div class="empty"><div class="big">📭</div>Rien en attente.<br>` +
+      `<span style="font-size:13px;">Poussez la file : ${code("python run_forge_outreach.py --send-push")}</span></div>`;
+  }
+  if (batch && pendingN) {
+    return `<div class="empty"><div class="big">⏳</div>Livraison du lot en cours — <b>${pendingN}</b> envoi${pendingN > 1 ? "s" : ""} restant${pendingN > 1 ? "s" : ""}.<br>` +
+      `<span style="font-size:13px;">Les cartes envoyées ne reviennent pas ici : elles passent dans l'onglet Terminés. ` +
+      `Les cartes non marquées reviendront au round suivant — après ${code("--send-pull")} puis ${code("--send-push")}.</span></div>`;
+  }
+  if (batch) { // batch record present but every item decided
+    return `<div class="empty"><div class="big">✓</div>Lot terminé — <b>${sents}</b> envoyé${sents > 1 ? "s" : ""}` +
+      (fails ? `, <b>${fails}</b> échec${fails > 1 ? "s" : ""} SMTP (jamais livrés)` : "") + `.<br>` +
+      `<span style="font-size:13px;">Rapatriez les décisions dans les drafts : ${code("python run_forge_outreach.py --send-pull")}` +
+      ` — vide ensuite la console — puis repoussez ce qui reste avec ${code("--send-push")}. Détail : onglet Terminés.</span></div>`;
+  }
+  if (decisions.length) {
+    return `<div class="empty"><div class="big">✓</div>Tout est traité — <b>${sents}</b> envoi${sents > 1 ? "s" : ""} · <b>${d.rejectedN}</b> rejet${d.rejectedN > 1 ? "s" : ""}` +
+      (fails ? ` · <b>${fails}</b> échec SMTP` : "") + `.<br>` +
+      `<span style="font-size:13px;">Les drafts ne sont à jour qu'après ${code("--send-pull")} (vide ensuite la console). ` +
+      `Repoussez ce qui reste avec ${code("--send-push")}. Détail : onglet Terminés.</span></div>`;
+  }
+  return `<div class="empty"><div class="big">📭</div>Rien à revoir.</div>`;
 }
 
 /* ---------- the review bar / batch progress ---------- */
 function renderBars(d) {
   const bars = $("bars");
-  const { batch, approved, rejected, missing } = d;
+  const { batch, approved, rejected } = d;
   if (!batch) {
     // REVIEW phase: stage counters + lock action
-    if (!d.pending.length) { bars.innerHTML = ""; return; }
+    if (!d.visible.length) { bars.innerHTML = ""; return; }
     const n = approved.length;
     const showReset = approved.length + rejected.length > 0;
     bars.innerHTML = `
@@ -412,61 +532,64 @@ function renderBars(d) {
                 title="${n ? "" : "approuvez au moins un email pour verrouiller"}">Verrouiller le lot — ${n} envoi${n > 1 ? "s" : ""}</button>
       </div>`;
     if (showReset) $("resetReview").onclick = resetReview;
-    $("lockOpen").onclick = () => lockModal(null);
+    $("lockOpen").onclick = () => lockModal();
     return;
   }
 
-  // BATCH phase: delivery progress
+  // BATCH phase: delivery progress (the mini-prog rows are the ONLY
+  // in-flight representation — decided cards left the review itself)
   const items = [...batch.items].sort((a, b) => a.delaySec - b.delaySec);
-  const sentN = items.filter((i) => d.dec.has(i.username)).length;
-  const next = items.find((i) => i.published && !d.dec.has(i.username));
-  const phaseDone = sentN === items.length;
+  const sentN = items.filter((i) => { const dd = d.dec.get(i.username); return dd && dd.action === "sent"; }).length;
+  const failedN = items.filter((i) => { const dd = d.dec.get(i.username); return dd && dd.action === "failed"; }).length;
+  const pendingN = items.length - sentN - failedN;
+  const phaseDone = pendingN === 0;
   const rows = items.map((i) => {
     const decision = d.dec.get(i.username);
     if (decision) {
+      if (decision.action === "failed") {
+        return `<div class="row"><span class="u">${esc(i.username)}</span>` +
+          `<span class="st bad">✗ échec SMTP — jamais envoyé (${i.tries} essai${i.tries > 1 ? "s" : ""}) ${when(decision.at)}</span></div>`;
+      }
       return `<div class="row"><span class="u">${esc(i.username)}</span>` +
         `<span class="st ok">✓ envoyé ${when(decision.at)}</span></div>`;
-    }
-    if (!i.published) {
-      return `<div class="row"><span class="u">${esc(i.username)}</span>` +
-        `<span class="st bad">jamais programmé ${i.publishError ? "— " + esc(i.publishError) : ""}</span></div>`;
     }
     return `<div class="row"><span class="u">${esc(i.username)}</span>` +
       `<span class="st wait">⏳ programmé — envoi à ${hhmm(i.scheduleAt)}</span></div>`;
   }).join("");
-  const republish = missing.length
-    ? `<button class="btn ghost2" id="lockMissing">↻ reprogrammer les ${missing.length} non partis</button>`
-    : "";
   const summary2 = phaseDone
-    ? `Lot terminé — <b>${sentN}/${items.length} envoyés</b>. Les décisions attendent le retour local : <code>python run_forge_outreach.py --send-pull</code> (vide ensuite la console).`
-    : `Lot en cours — <b>${sentN}/${items.length} envoyés</b>` +
-      (next ? ` · prochain envoi vers <b>${hhmm(next.scheduleAt)}</b>` : "") +
-      `. Vous pouvez fermer l'onglet — le cron GitHub (un envoi par tick de 5 min) garde le calendrier.`;
+    ? `Lot terminé — <b>${sentN}</b> envoyé${sentN > 1 ? "s" : ""}` +
+      (failedN ? ` · <b>${failedN}</b> échec${failedN > 1 ? "s" : ""} SMTP (jamais livrés)` : "") +
+      `. Les décisions attendent le retour local : <code>python run_forge_outreach.py --send-pull</code> (vide ensuite la console ; détail dans l'onglet Terminés).`
+    : `Lot en cours — <b>${sentN}</b> envoyé${sentN > 1 ? "s" : ""}` +
+      (failedN ? ` · <b>${failedN}</b> échec${failedN > 1 ? "s" : ""} SMTP` : "") +
+      (pendingN ? ` · <b>${pendingN}</b> à venir` : "") +
+      `. Vous pouvez fermer l'onglet — le cron GitHub (un envoi par tick) garde le calendrier.`;
 
   bars.innerHTML = `
     <div class="bar batch">
       <span class="grow">${summary2} <span class="note" style="display:block;">Lot ${esc(batch.id || "")} verrouillé le ${when(batch.at)} — espacement : un email par tick de 5 à 10 min.</span></span>
-      ${republish}
     </div>
     <div class="bar batch mini-prog" style="margin-top:-8px;">${rows}</div>`;
-  const ml = $("lockMissing");
-  if (ml) ml.onclick = () => lockModal("missing");
 }
 
 function renderHint(d) {
   const h = $("hint");
   const { decisions, batch } = state;
   if (batch) {
-    h.innerHTML = d.missing.length
-      ? `<b>${d.missing.length} envoi(s) du lot n'ont pas de statut de livraison.</b> ` +
-        `Cliquez « reprogrammer » et tapez <code>ENVOYER ${d.missing.length}</code> pour les replacer dans le calendrier.`
-      : `Les décisions du lot (${d.sentN} envoyés) ne seront enregistrées dans les drafts qu'au retour local : ` +
-        `<code>python run_forge_outreach.py --send-pull</code> — il refusera de vider la console tant que le lot n'est pas terminé.`;
+    const items = batch.items;
+    const pendingN = items.filter((i) => !d.dec.has(i.username)).length;
+    h.innerHTML = pendingN
+      ? `Les décisions du lot (envois, rejets, échecs SMTP) ne sont enregistrées dans les drafts qu'au retour local : ` +
+        `<code>python run_forge_outreach.py --send-pull</code> — il ne vide la console qu'une fois chaque envoi décidé. ` +
+        `Les cartes envoyées passent dans l'onglet Terminés ; les non marquées reviendront après ${`<code>--send-push</code>`}.`
+      : `Lot terminé. Rapatriez les décisions : <code>python run_forge_outreach.py --send-pull</code> ` +
+        `(vide la console), puis repoussez le reste avec <code>--send-push</code>.`;
     return;
   }
   if (decisions.length) {
     h.innerHTML = `Les décisions ci-dessus ne sont enregistrées dans les drafts qu'après un retour local : ` +
-      `<code>python run_forge_outreach.py --send-pull</code> (l'opération vide ensuite la console ; repoussez ensuite ce qui reste avec <code>--send-push</code>).`;
+      `<code>python run_forge_outreach.py --send-pull</code> (l'opération vide ensuite la console ; repoussez ensuite ce qui reste avec <code>--send-push</code>). ` +
+      `Sujets, adresses et raisons : onglet Terminés.`;
     return;
   }
   h.innerHTML = `Chaque carte montre le draft complet. <b>✓ Valider</b> / <b>✗ Rejeter</b> marquent la carte pour le lot — ` +
@@ -498,14 +621,15 @@ function checksList(item) {
 
 function renderCard(root, item, d) {
   const u = item.username || "";
-  const decision = d.dec.get(u);
   const stagedMark = d.stg.get(u);
-  const batchItem = d.bi.get(u);
+  const batching = !!state.batch; // during delivery the review is inert by design
   const el = document.createElement("article");
   el.className = "card";
-  if (decision) el.className += " decided";
-  else if (batchItem && !decision) el.className += " locked";
   el.id = "card-" + esc(u);
+  const acts = batching ? "" : actionsHtml(item, u, stagedMark);
+  const mockNote = item.attachment && item.attachment.present
+    ? `<div class="none">chargement du visuel…</div>` // holder keeps the reserved aspect-ratio box
+    : `<div class="none">pas de maquette jointe à cet email</div>`;
   el.innerHTML = `
     <div class="card-top">
       <div class="avatar">${esc((u[0] || "?").toUpperCase())}</div>
@@ -520,25 +644,23 @@ function renderCard(root, item, d) {
     </div>
     <div class="inner">
       <div class="badges">
-        ${decision
-          ? `<span class="stag ${decision.action === "sent" ? "appr" : "rej"}">${decision.action === "sent" ? "✓ ENVOYÉ" : "✗ rejeté"} ${when(decision.at)}</span>`
-          : batchItem && !decision
-            ? `<span class="stag" style="background:var(--chip-blue);color:#1e4f80;">⏳ dans le lot — envoi programmé ${batchItem.scheduleAt ? "à " + hhmm(batchItem.scheduleAt) : ""}</span>`
-            : stagedMark
-              ? `<span class="stag ${stagedMark.choice === "approved" ? "appr" : "rej"}">${stagedMark.choice === "approved" ? "✓ approuvé pour le lot" : "✗ rejeté (au verrouillage)"}</span>`
-              : ""}
+        ${batching
+          ? `<span class="stag wait">⏳ lot en cours — pas dans ce round</span>`
+          : stagedMark
+            ? `<span class="stag ${stagedMark.choice === "approved" ? "appr" : "rej"}">${stagedMark.choice === "approved" ? "✓ approuvé pour le lot" : "✗ rejeté (au verrouillage)"}</span>`
+            : ""}
         ${badges(item)}
       </div>
       ${bioHtml(item)}
       <div class="subject">${esc(item.subject)}</div>
       <div class="body">${esc(item.body)}</div>
       <div class="mock"><div class="cap">Maquette jointe à l'email ${item.attachment && item.attachment.present ? "" : "<b>(absente — email sans image)</b>"}</div>
-        <div class="mockin" data-user="${esc(u)}"><div class="none">chargement du visuel…</div></div>
+        <div class="mockin" data-user="${esc(u)}">${mockNote}</div>
       </div>
       ${factsHtml(item)}
       <div class="checks">${checksList(item)}</div>
     </div>
-    <div class="actions">${actionsHtml(item, u, decision, stagedMark)}</div>`;
+    ${acts ? `<div class="actions">${acts}</div>` : ""}`;
   root.appendChild(el);
 
   const a = el.querySelector('[data-act="rej"]');
@@ -549,10 +671,7 @@ function renderCard(root, item, d) {
   if (ap) ap.onclick = () => stage(u, "approved");
 }
 
-function actionsHtml(item, u, decision, stagedMark) {
-  if (decision || (state.batch && state.batch.items.some((i) => i.username === u))) {
-    return ""; // decided or locked: no buttons (card is .decided/.locked -> actions hidden anyway)
-  }
+function actionsHtml(item, u, stagedMark) {
   const on = stagedMark && stagedMark.choice === "approved";
   const onR = stagedMark && stagedMark.choice === "rejected";
   const stagedTitle = "Désélectionner cette carte (elle redevient sans marque)";
@@ -584,19 +703,94 @@ function factsHtml(item) {
     facts.map((f) => `<li>${esc(f)}</li>`).join("") + "</ul></details>";
 }
 
-async function loadImage(username) {
-  const holder = document.querySelector(`.mockin[data-user="${CSS.escape(username)}"]`);
-  if (!holder) return;
+/* ---------- mockup images: blob cache + reserved layout + lazy loading ----------
+   One fetch per username per push (not per poll). The b64 payload is decoded
+   once into a blob URL — later renders reuse the URL, so the browser's decode
+   cache does the work and the page never re-decodes base64 on every poll. */
+const imgCache = new Map(); // username -> { url, w, h, bytes, loading }
+const imgIO = new IntersectionObserver((entries) => {
+  for (const en of entries) {
+    if (!en.isIntersecting) continue;
+    imgIO.unobserve(en.target);
+    const u = en.target.dataset.user;
+    if (u && !imgCache.has(u)) loadImage(u, en.target);
+  }
+}, { rootMargin: "400px 0px" });
+
+function scheduleImages() {
+  for (const item of state.queue) {
+    const u = item.username || "";
+    const holder = document.querySelector(`#queue .mockin[data-user="${CSS.escape(u)}"]`);
+    if (!holder) continue;
+    const c = imgCache.get(u);
+    if (c) {
+      // every render() rebuilds the holders — a cached blob must be put
+      // straight back in, or the fresh placeholder would stay blank forever
+      if (c.url) fillImage(u, holder, c);
+      continue;                             // absent or in flight: leave the placeholder
+    }
+    if (!item.attachment || !item.attachment.present) {
+      // known absent — remember it so the IO never fires for this card
+      imgCache.set(u, { url: "", w: 0, h: 0, bytes: 0, loading: false });
+      holder.innerHTML = '<div class="none">pas de maquette jointe à cet email</div>';
+      continue;
+    }
+    imgIO.observe(holder);                  // lazy: fetch only near the viewport
+  }
+}
+
+async function loadImage(u, holder) {
+  imgCache.set(u, { url: "", w: 0, h: 0, bytes: 0, loading: true }); // in flight — dedupe re-observes
+  let r;
   try {
-    const r = await api("/api/image?username=" + encodeURIComponent(username));
-    if (!r.present) { holder.innerHTML = '<div class="none">aucune image poussée pour ce brouillon</div>'; return; }
-    const img = document.createElement("img");
-    img.alt = "maquette de l'app — sera jointe à l'email";
-    img.src = "data:image/png;base64," + r.b64;
-    holder.innerHTML = "";
-    holder.appendChild(img);
+    r = await api("/api/image?username=" + encodeURIComponent(u));
   } catch (e) {
-    holder.innerHTML = '<div class="none">visuel indisponible (' + esc(e.message) + ")</div>";
+    if (holder.isConnected) holder.innerHTML = '<div class="none">visuel indisponible (' + esc(e.message) + ")</div>";
+    imgCache.delete(u); // allow a later retry
+    return;
+  }
+  const bytes = r.bytes || Math.round(((r.b64 || "").length * 3) / 4);
+  if (!r.present || !r.b64) {
+    imgCache.set(u, { url: "", w: 0, h: 0, bytes: 0, loading: false });
+    if (holder.isConnected) holder.innerHTML = '<div class="none">aucune image poussée pour ce brouillon</div>';
+    return;
+  }
+  try {
+    const bin = atob(r.b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr], { type: "image/png" }));
+    const probe = new Image();
+    probe.src = url;
+    await probe.decode();
+    const entry = { url, w: probe.naturalWidth, h: probe.naturalHeight, bytes, loading: false };
+    imgCache.set(u, entry);
+    const cur = document.querySelector(`#queue .mockin[data-user="${CSS.escape(u)}"]`);
+    if (cur) fillImage(u, cur, entry);
+  } catch (e) {
+    if (holder.isConnected) holder.innerHTML = '<div class="none">visuel invalide</div>';
+    imgCache.delete(u); // decode failed — allow a later retry
+  }
+}
+
+function fillImage(u, holder, c) {
+  holder.style.aspectRatio = c.w && c.h ? c.w + " / " + c.h : "";
+  const img = new Image();
+  img.alt = "maquette de l'app — sera jointe à l'email";
+  img.src = c.url;
+  holder.innerHTML = "";
+  holder.appendChild(img);
+}
+
+function pruneImgCache() {
+  const wantedBytes = new Map(state.queue.map((q) => [q.username, (q.attachment && q.attachment.bytes) || 0]));
+  const live = new Set(wantedBytes.keys());
+  for (const [u, c] of imgCache) {
+    const bytes = wantedBytes.get(u) || 0;
+    if (!live.has(u) || (bytes && c.bytes !== bytes)) { // pulled away, or re-pushed with new bytes
+      if (c.url) URL.revokeObjectURL(c.url);
+      imgCache.delete(u);
+    }
   }
 }
 
@@ -613,52 +807,35 @@ async function stage(username, choice) {
 async function resetReview() {
   if (!confirm("Retirer toutes les marques ✓/✗ ? Les cartes redeviennent sans marque (rien n'est encore décidé).")) return;
   try {
-    for (const s of state.staged) await api("/api/stage", { username: s.username, choice: null });
+    const r = await api("/api/stage", { reset: true }); // one atomic call server-side
     await load();
-    toast("Revue réinitialisée", "ok");
+    toast(r.cleared ? `Revue réinitialisée — ${r.cleared} marque${r.cleared > 1 ? "s" : ""} retirée${r.cleared > 1 ? "s" : ""}` : "Revue déjà vide", "ok");
   } catch (e) {
     toast(e.message, "err");
   }
 }
 
 /* ---------- the lock modal ---------- */
-function lockModal(mode) {
+function lockModal() {
   const d = derive();
-  const list = mode === "missing" ? d.missing : d.approved;
+  const list = d.approved;
   if (!list.length) { toast("Rien à verrouiller", "err"); return; }
   const n = list.length;
-  const rejectedN = mode === "missing" ? 0 : d.rejected.length;
+  const rejectedN = d.rejected.length;
+  const rows = list.map((q, idx) =>
+    `<div class="l"><span class="who2">${esc(q.username)}</span>` +
+    `<span class="what">${esc(q.email_address)}<br><span style="color:var(--muted);">${esc(q.subject)}</span></span>` +
+    `<span class="when2">${idx === 0 ? "immédiat" : "5-10 min après le précédent"}</span></div>`).join("");
 
-  const order = mode === "missing"
-    ? list.map((i) => i) // batch items
-    : list.map((q) => q);
-  const rows = order.map((it, idx) => {
-    const isBatch = mode === "missing";
-    const username = it.username;
-    const email = isBatch ? it.email : it.email_address;
-    const subject = isBatch ? it.subject : it.subject;
-    const delayMin = isBatch ? Math.round((it.delaySec || 0) / 60) : null;
-    const when2 = mode === "missing"
-      ? (delayMin ? "~" + delayMin + " min après le précédent" : "immédiat")
-      : (idx === 0 ? "immédiat" : "5-10 min après le précédent");
-    return `<div class="l"><span class="who2">${esc(username)}</span>` +
-      `<span class="what">${esc(email)}<br><span style="color:var(--muted);">${esc(subject)}</span></span>` +
-      `<span class="when2">${when2}</span></div>`;
-  }).join("");
-
-  $("lockTitle").textContent = mode === "missing"
-    ? "Reprogrammer les envois jamais partis"
-    : `Verrouiller le lot — ${n} email${n > 1 ? "s" : ""} partiront`;
-  $("lockBody").innerHTML = mode === "missing"
-    ? `<p>${n} envoi${n > 1 ? "s" : ""} du lot ${esc(state.batch.id || "")} n'ont pas de statut de livraison. Ils vont être replacés dans le calendrier (un par tick, 5 à 10 min d'écart).</p>
-       <div class="locklist">${rows}</div>`
-    : `<p>Valider le verrouillage enregistre <b>${n} envoi${n > 1 ? "s" : ""}</b> dans le calendrier (le premier part au prochain tick — 5 min max — puis un toutes les 5 à 10 min) —
-       et ${rejectedN ? `<b>${rejectedN} rejet${rejectedN > 1 ? "s" : ""}</b> comme définitif${rejectedN > 1 ? "s" : ""}` : "aucun rejet"}.</p>
-       <div class="locklist">${rows}</div>` +
-       (rejectedN
-         ? `<p style="margin-top:8px;">Raison appliquée aux ${rejectedN} rejet${rejectedN > 1 ? "s" : ""} (facultative) :</p>
-            <textarea id="lockRejectReason" rows="2" placeholder="Ex. : déjà en cours avec un autre éditeur, offre pas adaptée…"></textarea>`
-         : "");
+  $("lockTitle").textContent = `Verrouiller le lot — ${n} email${n > 1 ? "s" : ""} partiront`;
+  $("lockBody").innerHTML =
+    `<p>Valider le verrouillage enregistre <b>${n} envoi${n > 1 ? "s" : ""}</b> dans le calendrier (le premier part au prochain tick — 5 min max — puis un toutes les 5 à 10 min) —` +
+    ` et ${rejectedN ? `<b>${rejectedN} rejet${rejectedN > 1 ? "s" : ""}</b> comme définitif${rejectedN > 1 ? "s" : ""}` : "aucun rejet"}.</p>
+     <div class="locklist">${rows}</div>` +
+    (rejectedN
+      ? `<p style="margin-top:8px;">Raison appliquée aux ${rejectedN} rejet${rejectedN > 1 ? "s" : ""} (facultative) :</p>
+         <textarea id="lockRejectReason" rows="2" placeholder="Ex. : déjà en cours avec un autre éditeur, offre pas adaptée…"></textarea>`
+      : "");
   const ph = $("lockPhrase");
   ph.value = "";
   ph.placeholder = "ENVOYER " + n;
@@ -666,7 +843,7 @@ function lockModal(mode) {
   $("lockMsgs").innerHTML = `<div class="info">Pour verrouiller, tapez exactement <b>ENVOYER ${n}</b> — c'est la confirmation humaine unique pour tout le lot.</div>`;
   const go = $("lockGo");
   go.disabled = true;
-  go.textContent = mode === "missing" ? "Reprogrammer" : "Verrouiller le lot";
+  go.textContent = "Verrouiller le lot";
   ph.oninput = () => {
     const ok = ph.value.trim().toUpperCase() === "ENVOYER " + n;
     go.disabled = !ok;
@@ -679,17 +856,13 @@ function lockModal(mode) {
     go.disabled = true;
     $("lockMsgs").innerHTML = '<div class="info">Verrouillage en cours — création du lot + programmation des envois…</div>';
     const reasonEl = $("lockRejectReason");
-    const payload = {
-      confirm: ph.value.trim(),
-      missingOnly: mode === "missing",
-    };
-    if (mode !== "missing" && rejectedN && reasonEl) payload.rejectReason = reasonEl.value.trim();
+    const payload = { confirm: ph.value.trim() };
+    if (rejectedN && reasonEl) payload.rejectReason = reasonEl.value.trim();
     api("/api/lock", payload)
       .then((r) => {
-        const n = r.batch.items.length;
-        const pl = (s) => (n > 1 ? s + "s" : s);
+        const m = r.batch.items.length;
         closeModals();
-        toast(`Lot verrouillé — ${n} envoi${pl("")} programmé${pl("")} (un par tick de 5-10 min)`, "ok");
+        toast(`Lot verrouillé — ${m} envoi${m > 1 ? "s" : ""} programmé${m > 1 ? "s" : ""} (un par tick de 5-10 min)`, "ok");
         load();
       })
       .catch((e) => {
@@ -738,25 +911,39 @@ function rcHtml(outcome) {
   const cls = REPLY_BADGE[outcome] || "";
   return `<span class="badge ${cls}">${REPLY_LABELS[outcome] || outcome || "—"}</span>`;
 }
-
+function kpiFp(k) {
+  return JSON.stringify([
+    k.totals,
+    k.rows.map((r) => [r.username, r.sentAt, r.opened, r.openEvents, r.clicks,
+                       r.firstOpenDelaySec, (r.replies || []).map((x) => [x.outcome, x.at])]),
+  ]);
+}
 async function loadKpis() {
-  const wrap = $("kpiWrap");
-  wrap.classList.add("busy");
+  beginBusy();
   try {
     const data = await api("/api/kpi");
+    const fp = kpiFp(data);
+    if (fp === domKpiFp) return; // nothing changed — leave the table alone
+    domKpiFp = fp;
     renderKpis(data);
   } catch (e) {
-    if (String(e.message).includes("401")) {
-      localStorage.removeItem("forgeConsoleToken");
-      TOKEN = "";
-      initToken();
-    } else {
-      $("kpiSummary").innerHTML = "";
-      wrap.innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
-    }
+    if (authOut(e)) return;
+    $("kpiSummary").innerHTML = "";
+    $("kpiWrap").innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
   } finally {
-    wrap.classList.remove("busy");
+    endBusy();
   }
+}
+
+function totalsChips(t) {
+  const pct = (n) => (t.sent ? Math.round((100 * n) / t.sent) : 0);
+  const chips = [
+    `Envoyés : <b>${t.sent}</b>`,
+    `Ouverts ≥ 1 : <b>${t.opened}</b> (${pct(t.opened)}%)`,
+    `Clics : <b>${t.clicks}</b>${t.clickUsers ? ` — ${t.clickUsers} prospect${t.clickUsers > 1 ? "s" : ""} (${pct(t.clickUsers)}%)` : ""}`,
+    `Réponses : <b>${t.replies}</b>${t.replies ? " — " + Object.keys(REPLY_LABELS).filter((k) => t.byOutcome[k]).map((k) => rcHtml(k) + " " + t.byOutcome[k]).join(" ") : ""}`,
+  ];
+  return chips.map((c) => `<span class="chip">${c}</span>`).join("");
 }
 
 function kpiRow(r) {
@@ -796,14 +983,7 @@ function renderKpis(data) {
       `et les événements restent affichés ici même après <code>--send-pull</code>.</span></div>`;
     return;
   }
-  const pct = (n) => (t.sent ? Math.round((100 * n) / t.sent) : 0);
-  const chips = [
-    `Envoyés : <b>${t.sent}</b>`,
-    `Ouverts ≥ 1 : <b>${t.opened}</b> (${pct(t.opened)}%)`,
-    `Clics : <b>${t.clicks}</b>${t.clickUsers ? ` — ${t.clickUsers} prospect${t.clickUsers > 1 ? "s" : ""} (${pct(t.clickUsers)}%)` : ""}`,
-    `Réponses : <b>${t.replies}</b>${t.replies ? " — " + Object.keys(REPLY_LABELS).filter((k) => t.byOutcome[k]).map((k) => rcHtml(k) + " " + t.byOutcome[k]).join(" ") : ""}`,
-  ];
-  $("kpiSummary").innerHTML = chips.map((c) => `<span class="chip">${c}</span>`).join("");
+  $("kpiSummary").innerHTML = totalsChips(t);
 
   if (!data.rows.length) {
     wrap.innerHTML = `<div class="empty">Aucune ligne à montrer.</div>`;
@@ -820,6 +1000,7 @@ function renderKpis(data) {
       try {
         const r = await api("/api/kpi", { username: u, outcome: sel.value });
         toast(r.outcome ? `Réponse ${REPLY_LABELS[r.outcome] || r.outcome} enregistrée pour ${u}` : `Marque de réponse retirée pour ${u}`, "ok");
+        b.disabled = false; // a same-value resave skips the re-render (fingerprint gate) — never strand the button
         await loadKpis();
       } catch (e) {
         toast(e.message, "err");
@@ -839,6 +1020,7 @@ function renderKpis(data) {
         toast(r.removed
           ? `${r.removed} ouverture${r.removed > 1 ? "s" : ""}/clic${r.removed > 1 ? "s" : ""} retiré${r.removed > 1 ? "s" : ""} pour ${u}`
           : `Aucune ouverture/clic à retirer pour ${u}`, "ok");
+        b.disabled = false; // a no-op clearSelf skips the re-render — never strand the button
         await loadKpis();
       } catch (e) {
         toast(e.message, "err");
@@ -848,12 +1030,126 @@ function renderKpis(data) {
   }
 }
 
+/* ---------- Terminés / Historique tab ---------- */
+function histFpDecisions(s) {
+  return JSON.stringify(s.decisions.map((d) => [d.username, d.action, d.at, !!d.revised, d.tries || 0]));
+}
+function histFpKpi(k) {
+  return kpiFp(k);
+}
+function histSummary() {
+  const { decisions } = state;
+  const sents = decisions.filter((d) => d.action === "sent").length;
+  const rejs = decisions.filter((d) => d.action === "rejected_manual").length;
+  const fails = decisions.filter((d) => d.action === "failed").length;
+  return `<span class="chip">Décisions non rapatriées : <b>${decisions.length}</b></span>` +
+    `<span class="chip">✓ envois : <b>${sents}</b></span>` +
+    (rejs ? `<span class="chip">✗ rejets : <b>${rejs}</b></span>` : "") +
+    (fails ? `<span class="chip" style="color:var(--stop);border-color:var(--stop);">✗ échecs SMTP : <b>${fails}</b> — jamais envoyés</span>` : "");
+}
+function histHint() {
+  const pre = state.decisions.length
+    ? `Les sujets et adresses ci-dessus disparaissent après le retour local <code>--send-pull</code> : le suivi ne stocke ni sujet ni corps — seule la ligne KPI reste. `
+    : "";
+  $("histHint").innerHTML = pre +
+    `Les envois faits depuis la console terminale (<code>--send</code>) n'apparaissent jamais ici : leur trace est le md <code>outreach/&lt;username&gt;.md</code>. ` +
+    `Le suivi KPI démarre avec les envois en lot post-déploiement.`;
+}
+function histDecisionRow(d) {
+  const q = state.queue.find((x) => x.username === d.username);
+  const u = `<td><b>${esc(d.username)}</b></td>`;
+  const at = `<td>${when(d.at)}</td>`;
+  if (d.action === "sent") {
+    return `<tr>${u}` +
+      `<td><span class="badge o">✓ ENVOYÉ</span></td>${at}` +
+      `<td>${esc(d.to || (q && q.email_address) || "—")}</td>` +
+      `<td class="subj">${esc(d.subject || "—")}` +
+      (d.revised ? ` <span class="badge w" title="${esc("Réécrit par le rédacteur : " + (d.revision || ""))}">✏️ modifié</span>` : "") +
+      `</td>` +
+      `<td class="det">${d.detail ? esc(short(d.detail, 160)) : "—"}</td></tr>`;
+  }
+  if (d.action === "failed") {
+    return `<tr>${u}` +
+      `<td><span class="badge s">✗ ÉCHEC SMTP — ${d.tries || "?"} essai${(d.tries || 1) > 1 ? "s" : ""}</span></td>${at}` +
+      `<td>${esc(d.to || "—")}</td>` +
+      `<td class="subj">—</td>` +
+      `<td class="det">jamais envoyé — ${d.detail ? esc(short(d.detail, 200)) : "erreur SMTP"}</td></tr>`;
+  }
+  if (d.action === "rejected_manual") {
+    return `<tr>${u}` +
+      `<td><span class="badge w">✗ rejeté</span></td>${at}` +
+      `<td>${esc((q && q.email_address) || "—")}</td>` +
+      `<td class="subj">—</td>` +
+      `<td class="det">${esc(d.reason || "—")}</td></tr>`;
+  }
+  return `<tr>${u}<td colspan="5">${esc("action " + d.action)}</td></tr>`;
+}
+function renderHistoryDecisions() {
+  $("histSummary").innerHTML = histSummary();
+  histHint();
+  $("histWrap").innerHTML = `<table class="kpis hist"><thead><tr>` +
+    `<th>Prospect</th><th>Action</th><th>Quand</th><th>Vers</th><th>Sujet</th><th>Détail</th>` +
+    `</tr></thead><tbody>${state.decisions.map(histDecisionRow).join("")}</tbody></table>`;
+}
+function renderHistoryKpis(k) {
+  histHint();
+  $("histSummary").innerHTML = totalsChips(k.totals);
+  if (!k.totals.sent) {
+    $("histWrap").innerHTML = `<div class="empty"><div class="big">📈</div>Aucun envoi suivi.<br>` +
+      `<span style="font-size:13px;">Après <code>--send-pull</code>, le détail des décisions est rapatrié dans les drafts — il ne reste ici que les lignes KPI du suivi.</span></div>`;
+    return;
+  }
+  $("histWrap").innerHTML = `<table class="kpis hist"><thead><tr>` +
+    `<th>Prospect</th><th>Envoyé</th><th>Ouverture</th><th>Clics</th><th>Réponse</th>` +
+    `</tr></thead><tbody>${k.rows.map((r) => {
+      const last = r.replies && r.replies.length ? r.replies[0] : null;
+      return `<tr>` +
+        `<td><b>${esc(r.username)}</b></td>` +
+        `<td>${when(r.sentAt)}</td>` +
+        `<td>${r.opened ? `<span class="kval">✓</span> ouvert` + (r.openEvents > 1 ? ` (${r.openEvents}×)` : "") : "—"}</td>` +
+        `<td>${r.clicks ? `<b>${r.clicks}</b>` : "—"}</td>` +
+        `<td>${last ? rcHtml(last.outcome) + ` <span style="color:var(--muted);font-size:12px;">${when(last.at)}</span>` : "—"}</td>` +
+        `</tr>`;
+    }).join("")}</tbody></table>`;
+}
+async function loadHistory() {
+  beginBusy();
+  try {
+    if (!state.decisions.length) {
+      // no queued decisions: the history falls back to the KPI rows
+      const k = await api("/api/kpi");
+      const fp = histFpKpi(k);
+      if (!(domHistMode === "kpis" && fp === domHistFp)) {
+        domHistMode = "kpis";
+        domHistFp = fp;
+        renderHistoryKpis(k);
+      }
+    } else {
+      const fp = histFpDecisions(state);
+      if (!(domHistMode === "decisions" && fp === domHistFp)) {
+        domHistMode = "decisions";
+        domHistFp = fp;
+        renderHistoryDecisions();
+      }
+    }
+  } catch (e) {
+    if (authOut(e)) return;
+    $("histWrap").innerHTML = `<div class="empty">Erreur : ${esc(e.message)}</div>`;
+  } finally {
+    endBusy();
+  }
+}
+
+/* ---------- pane switching / polling ---------- */
 function switchPane(p) {
   pane = p;
   $("reviewPane").style.display = p === "review" ? "" : "none";
   $("kpis").style.display = p === "kpis" ? "" : "none";
+  $("historyPane").style.display = p === "history" ? "" : "none";
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("on", b.dataset.pane === p);
   if (p === "kpis") loadKpis();
+  else if (p === "history") loadHistory();
+  else load();
 }
 
 /* ---------- modal plumbing ---------- */
@@ -869,14 +1165,29 @@ document.querySelectorAll(".modal-back").forEach((mb) => {
 });
 document.querySelectorAll("[data-close]").forEach((b) => b.onclick = closeModals);
 
-$("refreshBtn").onclick = () => (pane === "kpis" ? loadKpis() : load());
+$("refreshBtn").onclick = () => {
+  if (pane === "kpis") loadKpis();
+  else if (pane === "history") loadHistory();
+  else load();
+};
 document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => switchPane(b.dataset.pane)));
 initToken();
 setInterval(() => {
+  // Poll discipline: nothing while the tab is hidden, a modal is open, or the
+  // reviewer is mid-scroll (<600 ms ago) — a poll mid-scroll was a big part
+  // of the freeze/jump feeling.
+  if (!TOKEN) return;
+  if (document.hidden) return;
+  if (performance.now() - lastScrollAt < 600) return;
   const open = [...document.querySelectorAll(".modal-back.on")];
-  if (TOKEN && !open.length) {
-    if (pane === "kpis") loadKpis(); else load();
-  }
+  if (open.length) return;
+  if (pane === "kpis") loadKpis();
+  else if (pane === "history") {
+    // a tick may have just produced decisions — refresh the session first,
+    // then let loadHistory pick the right source (its own fingerprints gate
+    // the re-render; a quiet poll must not rewrite the DOM)
+    refreshSession().then(() => loadHistory());
+  } else load();
 }, 20000);
 </script>
 </body>

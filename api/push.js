@@ -60,7 +60,8 @@ export default async function handler(req, res) {
   if (staged.length) {
     return json(res, 409, {
       error: `${staged.length} draft(s) are still staged from an unfinished review `
-           + `(${staged.map((s) => s.username).join(", ")}). Lock or reset the review before pushing a new queue.`,
+           + `(${staged.map((s) => s.username).join(", ")}). Lock the review (Verrouiller) or reset it `
+           + "(bouton ↺ réinitialiser la revue, top de l'écran) before pushing a new queue.",
       staged,
     });
   }
@@ -76,7 +77,7 @@ export default async function handler(req, res) {
     const c = { ...item };
     const att = c.attachment;
     const b64 = att && typeof att.b64 === "string" ? att.b64 : "";
-    const hasImg = Boolean(b64) || att.present === true;
+    const hasImg = Boolean(b64) || (att ? att.present === true : false); // attachment may be null/absent
     c.attachment = {
       filename: (att && att.filename) || "app-preview.png",
       present: hasImg,

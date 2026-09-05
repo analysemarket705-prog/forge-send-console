@@ -20,8 +20,14 @@
 //     concurrent deliveries; a claim younger than 45 min means another
 //     delivery is in flight — skip. Older than 45 min (a crashed attempt)
 //     is stale: claim over it and retry.
-//   - SMTP failure records NOTHING, drops the claim and answers 502 —
-//     senddue surfaces it and the next cron tick naturally retries.
+//   - SMTP failure drops the claim and answers 502 — senddue surfaces it and
+//     the next cron tick naturally retries — UNTIL the per-item retry cap
+//     (MAX_TRIES below) is hit: a hard-failing email would otherwise starve
+//     every later email in the batch AND wedge the console (a live batch
+//     blocks lock/clear/push). At the cap the item is dead-lettered: a
+//     `failed` decision (no subject/body/tk — nothing was delivered, there is
+//     nothing to sync or track) and item.status = "failed", and the drip
+//     moves on to the next queued email on the following tick.
 //
 // Reads NOTHING from the queue item: subject/body/email/attachment flag are
 // the snapshot frozen in the batch record at lock time — a send ships
@@ -39,6 +45,10 @@ import crypto from "node:crypto";
 import { json, readBody, kv, kvPipeline, kvGetDecisions, kvGetBatch, smtpConfig, smtpSend, withBatchLock, rewriteText, htmlMirror, trackKey, tkMapKey, trackEvt, Q_DECS, Q_BATCH, Q_TRK_USERS, imgKey, claimKey, TRK_MAP_TTL_S, TRK_LIST_CAP } from "./_lib.js";
 
 const CLAIM_FRESH_MS = 45 * 60 * 1000; // a claim older than this is a crashed attempt
+// Failed-attempt cap before an item is dead-lettered (see header). A value of
+// 3 = ~15-30 min of cron ticks before a broken address stops blocking the
+// batch — bounded, never infinite again.
+const MAX_TRIES = Math.max(1, parseInt(process.env.FORGE_BATCH_MAX_TRIES || "3", 10) || 3);
 const TK_RE = /\?tk=([0-9a-f]{24})/;   // extracts the tracking token from a recorded body
 
 /**
@@ -107,15 +117,24 @@ export default async function handler(req, res) {
     // idempotently from the tk embedded in the recorded (tracked) body.
     await healTracking(username, prior);
     // Heal: the decision is the durable truth — make the item match it.
+    // Action-gated: only a `sent` decision heals the item to sent; a `failed`
+    // decision (dead-letter — a crash between the decision write and the
+    // status write) converges it to failed instead. Anything else leaves the
+    // item untouched.
     // Serialized under withBatchLock against a FRESH read: the document
     // snapshot read above may already be stale (another delivery wrote it
     // meanwhile), and a whole-document SET would roll their update back.
     await withBatchLock(async () => {
       const cur = await kvGetBatch();
       const it = cur && cur.id === body.batch && cur.items.find((i) => i.username === username);
-      if (it && it.status !== "sent") {
+      if (!it) return;
+      if (prior.action === "sent" && it.status !== "sent") {
         it.status = "sent";
         it.sentAt = prior.at;
+        await kv("SET", Q_BATCH, JSON.stringify(cur));
+      } else if (prior.action === "failed" && it.status !== "failed") {
+        it.status = "failed";
+        it.error = prior.detail ? `SMTP send failed — ${String(prior.detail).slice(0, 200)}` : "SMTP send failed (dead-lettered)";
         await kv("SET", Q_BATCH, JSON.stringify(cur));
       }
     });
@@ -209,8 +228,41 @@ export default async function handler(req, res) {
     return json(res, 200, { ok: true, action: "sent", at, detail });
   } catch (e) {
     const why = e && e.response ? e.response : String(e.message || e);
-    // Nothing recorded, claim dropped: the next cron tick retries naturally.
+    const short = String(why).slice(0, 300);
+    // Dead-letter at the retry cap (see header). Fresh read under the batch
+    // lock — the tries bump above was on another fresh read, and two
+    // overlapping ticks can race this document.
+    let tries = 0;
+    let deadAt = "";
+    try {
+      await withBatchLock(async () => {
+        const cur = await kvGetBatch();
+        const it = cur && cur.id === body.batch && cur.items.find((i) => i.username === username);
+        if (!it) return;
+        tries = it.tries || 0;
+        if (tries < MAX_TRIES) return; // below the cap: plain retry next tick
+        deadAt = new Date().toISOString();
+        // No subject, no body, no tk: the email never left. The `failed`
+        // decision terminates the item for batchPending (the console unlocks)
+        // and the local pull records it as status send_failed on the md.
+        await kv("LPUSH", Q_DECS, JSON.stringify({
+          username, action: "failed", at: deadAt, to: item.email,
+          tries, via: "batch",
+          detail: `SMTP send failed after ${tries} attempts — ${short}`,
+        }));
+        it.status = "failed";
+        it.error = `SMTP failed after ${tries} attempts`;
+        await kv("SET", Q_BATCH, JSON.stringify(cur));
+      });
+    } catch {
+      // batch lock busy (another delivery mid-flight): fall through to the
+      // plain 502 — the next tick's attempt dead-letters once the cap is hit.
+    }
+    // Claim dropped either way: the next cron tick retries naturally.
     await kv("DEL", claimKey(username));
-    return json(res, 502, { error: `SMTP send failed — ${String(why).slice(0, 300)}` });
+    if (deadAt) {
+      return json(res, 200, { ok: true, action: "failed", at: deadAt, tries, detail: `SMTP send failed after ${tries} attempts — ${short}` });
+    }
+    return json(res, 502, { error: `SMTP send failed — ${short}` });
   }
 }

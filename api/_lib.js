@@ -231,14 +231,16 @@ export async function kvGetBatch() {
 }
 
 /**
- * Items of an active batch that have no sent decision yet. A batch item is
- * only ever SENT (rejections are decided at lock, they never enter the
- * batch), so the sent-decision IS the durable "done" marker: the SMTP
- * success LPUSHes it BEFORE the item status moves, and a later batchsend
- * delivery (next cron tick) that finds it heals the item status. Pending
- * derives from decisions, never
- * from item.status — a crash between SMTP and status-update can therefore
- * never wedge the batch.
+ * Items of an active batch with no terminal decision yet. A batch item ends
+ * as `sent` (SMTP success LPUSHes the decision BEFORE the item status moves)
+ * or `failed` (dead-letter after MAX_TRIES in batchsend — never delivered,
+ * so the decision carries NO subject/body/tk: nothing to sync, nothing
+ * tracked; the decision-without-tracking case is the dead-letter only).
+ * Rejections never enter the batch (they are decided at lock). A later
+ * batchsend delivery that finds a prior decision heals the item status
+ * (action-gated: sent -> sent, failed -> failed). Pending derives from
+ * decisions, never from item.status — a crash between SMTP and status-update
+ * can therefore never wedge the batch.
  */
 export function batchPending(batch, decisions) {
   if (!batch) return [];
