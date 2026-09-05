@@ -240,7 +240,7 @@ note `UPSTASH_REDIS_REST_URL` et `UPSTASH_REDIS_REST_TOKEN`.
 | `FORGE_EMAIL_FROM_NAME` | `Ronan Delerue` |
 | `FORGE_KV_REST_URL` | l'URL REST du KV Upstash |
 | `FORGE_KV_REST_TOKEN` | le token REST du KV Upstash |
-| `FORGE_CONSOLE_TOKEN` | `<à générer>` — **identique** au secret GitHub et au `FORGE_CONSOLE_TOKEN` du `.env` local ; le navigateur le demande une fois |
+| `FORGE_CONSOLE_TOKEN` | `<à générer>` — **identique** au secret GitHub et au `FORGE_CONSOLE_TOKEN` du `.env` local ; le navigateur le demande une fois par navigateur (retenu en `localStorage` — même jeton, jamais retapé) |
 | `DEEPSEEK_API_KEY` | la clé DeepSeek du `.env` local — nécessaire au bouton **Modifier** (`api/revise.js` appelle l'agent writer depuis le serveur). Sans elle : 500 « modifier cannot run ». Modèles/endpoint surchargeables via `FORGE_REVISE_MODEL` / `FORGE_REVISE_BASE` |
 | `FORGE_TRACK_BASE` | `https://go.forgefitapp.co` — l'origine des liens de tracking réécrits dans chaque email (pixel + clic). Surchargeable pour un test local ; sans elle, les liens pointent vers `go.forgefitapp.co` par défaut |
 

@@ -182,6 +182,7 @@
       <p><b>Clé de la console</b> — cette page contient les brouillons d'emails et les adresses des prospects : elle est protégée par le jeton <code>FORGE_CONSOLE_TOKEN</code>.</p>
       <label>Jeton :</label>
       <input type="text" id="tokenInput" style="width:100%;font:inherit;padding:10px;border:1.5px solid var(--line);border-radius:9px;margin:8px 0;">
+      <p style="margin:0 0 8px;color:var(--muted);font-size:0.85em;">Le jeton est retenu par ce navigateur — vous ne le retaperez plus ici.</p>
       <div class="actions" style="border-top:none;padding:0;justify-content:flex-start;">
         <button class="btn lock" id="tokenGo">Ouvrir la console</button>
       </div>
@@ -245,7 +246,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const API = "";
-let TOKEN = sessionStorage.getItem("forgeConsoleToken") || "";
+let TOKEN = localStorage.getItem("forgeConsoleToken") || "";
 let state = { queue: [], decisions: [], staged: [], batch: null };
 let pane = "review"; // "review" | "kpis" — drives what the poll/refresh buttons fetch
 
@@ -307,7 +308,7 @@ function initToken() {
     const t = $("tokenInput").value.trim();
     if (!t) return;
     TOKEN = t;
-    sessionStorage.setItem("forgeConsoleToken", t);
+    localStorage.setItem("forgeConsoleToken", t);
     api("/api/session").then(() => initToken()).catch((e) => toast("Jeton refusé : " + e.message, "err"));
   };
 }
@@ -320,7 +321,7 @@ async function load() {
     render();
   } catch (e) {
     if (String(e.message).includes("401")) {
-      sessionStorage.removeItem("forgeConsoleToken");
+      localStorage.removeItem("forgeConsoleToken");
       TOKEN = "";
       initToken();
     } else toast("Erreur : " + e.message, "err");
@@ -746,7 +747,7 @@ async function loadKpis() {
     renderKpis(data);
   } catch (e) {
     if (String(e.message).includes("401")) {
-      sessionStorage.removeItem("forgeConsoleToken");
+      localStorage.removeItem("forgeConsoleToken");
       TOKEN = "";
       initToken();
     } else {
