@@ -777,7 +777,8 @@ function kpiRow(r) {
       : "—"}</td>
     <td>${last ? rcHtml(last.outcome) + ` <span style="color:var(--muted);font-size:12px;">${when(last.at)}</span>` : "—"}</td>
     <td class="kaction"><select data-u="${esc(r.username)}" title="Marquer / remplacer / retirer la réponse de ce prospect">${sel}</select>
-      <button class="btn ghost2 ksave" data-u="${esc(r.username)}" style="padding:4px 10px;">enreg.</button></td>
+      <button class="btn ghost2 ksave" data-u="${esc(r.username)}" style="padding:4px 10px;">enreg.</button>
+      <button class="btn ghost2 kself" data-u="${esc(r.username)}" style="padding:4px 10px;" title="C'était VOUS (vérification dans vos Envoyés, clic de test) ? Retire les ouvertures/clics de ce prospect des KPIs. L'envoi reste compté, les réponses marquées restent.">C'était moi</button></td>
   </tr>`;
 }
 
@@ -786,7 +787,8 @@ function renderKpis(data) {
   const wrap = $("kpiWrap");
   $("kpiHint").innerHTML =
     `Ouvertures mesurées par <b>pixel</b> dans chaque email de lot (Gmail/Outlook préchargent les images via leurs serveurs — compter comme « au moins une ouverture + délai de la première »). ` +
-    `Clics = lien de la signature suivi. Réponses = <b>marquées à la main</b> ici depuis la boîte Zoho (semi-manuel : Zoho gratuit n'a pas d'IMAP).`;
+    `Clics = lien de la signature suivi. Réponses = <b>marquées à la main</b> ici depuis la boîte Zoho (semi-manuel : Zoho gratuit n'a pas d'IMAP). ` +
+    `Le pixel ne peut pas vous distinguer du prospect (aucune IP stockée) : si vous ouvrez un email dans vos Envoyés ou cliquez le lien pour tester, le bouton <b>« C'était moi »</b> de la ligne retire ces ouvertures/clics.`;
   if (!t.sent) {
     $("kpiSummary").innerHTML = "";
     wrap.innerHTML = `<div class="empty"><div class="big">📈</div>Aucun envoi suivi pour l'instant.<br>` +
@@ -818,6 +820,25 @@ function renderKpis(data) {
       try {
         const r = await api("/api/kpi", { username: u, outcome: sel.value });
         toast(r.outcome ? `Réponse ${REPLY_LABELS[r.outcome] || r.outcome} enregistrée pour ${u}` : `Marque de réponse retirée pour ${u}`, "ok");
+        await loadKpis();
+      } catch (e) {
+        toast(e.message, "err");
+        b.disabled = false;
+      }
+    };
+  }
+  for (const b of wrap.querySelectorAll(".kself")) {
+    b.onclick = async () => {
+      const u = b.dataset.u;
+      if (!confirm(`Retirer les ouvertures et clics de ${u} ?\n\n` +
+        `À utiliser quand ces événements venaient de VOS vérifications (ouverture dans vos Envoyés, clic de test). ` +
+        `Ouvertures et clics effacés — l'envoi reste compté et les réponses marquées sont conservées.`)) return;
+      b.disabled = true;
+      try {
+        const r = await api("/api/kpi", { username: u, clearSelf: true });
+        toast(r.removed
+          ? `${r.removed} ouverture${r.removed > 1 ? "s" : ""}/clic${r.removed > 1 ? "s" : ""} retiré${r.removed > 1 ? "s" : ""} pour ${u}`
+          : `Aucune ouverture/clic à retirer pour ${u}`, "ok");
         await loadKpis();
       } catch (e) {
         toast(e.message, "err");

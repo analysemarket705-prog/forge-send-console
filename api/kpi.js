@@ -1,5 +1,7 @@
 // GET  /api/kpi              ->  { totals, rows }
-// POST /api/kpi  { username, outcome }  ->  { ok, at, outcome, username, replies }
+// POST /api/kpi  — two reviewer actions, same route:
+//   { username, outcome }        ->  { ok, at, outcome, username, replies }
+//   { username, clearSelf: true }->  { ok, username, removed }
 //
 // One token-gated resource behind the KPI tab — two methods on the same
 // route keep the serverless-function count under the Hobby cap (12 per
@@ -18,13 +20,25 @@
 // an error. Rows sorted by sentAt desc. This data lives in keys the console
 // clear never touches, so it survives the review lifecycle by design.
 //
-// POST is the semi-manual reply counting (Zoho free has no IMAP — the
-// server cannot read the mailbox; the reviewer marks replies in the KPI
-// tab). outcome is one of positive / neutral / negative / bounce — or
-// EMPTY, which removes the reply mark (a mis-click stays reversible).
-// REPLACE semantics: a re-mark overwrites the previous reply, so
-// corrections never double-count. 404 when the prospect has no tracked send
-// (a reply to an untracked email cannot be counted here).
+// POST is the reviewer's semi-manual bookkeeping (Zoho free has no IMAP —
+// the server cannot read the mailbox; the reviewer marks replies and cleans
+// self-tests in the KPI tab). The pixel/click endpoints carry no identity
+// (no IP/UA ever stored, by design) so the reviewer's OWN fetches — opening
+// the sent copy in Zoho's Sent folder to check it, test-clicking the link —
+// are indistinguishable from a prospect's at record time. Both POST shapes
+// keep this honest with explicit reviewer actions:
+//   { username, outcome }         reply mark: positive / neutral / negative /
+//                                 bounce — or EMPTY, which removes the mark
+//                                 (a mis-click stays reversible). REPLACE
+//                                 semantics: a re-mark overwrites the previous
+//                                 reply, so corrections never double-count.
+//   { username, clearSelf: true } "c'était moi": drops the prospect's open and
+//                                 click events (the reviewer's own checks)
+//                                 from the folds. The sent baseline and any
+//                                 reply marks survive — the row stays, only
+//                                 fetch-attributable noise goes. Idempotent:
+//                                 nothing to drop answers removed: 0.
+// 404 when the prospect has no tracked send (nothing to reply to / to clear).
 
 import { json, requireToken, readBody, kv, kvPipeline, Q_TRK_USERS, trackKey, trackEvt, OUTCOMES, TRK_LIST_CAP } from "./_lib.js";
 
@@ -82,13 +96,7 @@ function delaySec(from, to) {
   return ms >= 0 && Number.isFinite(ms) ? Math.round(ms / 1000) : null;
 }
 
-async function markReply(req, res) {
-  let body = {};
-  try {
-    body = await readBody(req);
-  } catch {
-    body = {};
-  }
+async function markReply(res, body) {
   const { username } = body;
   const outcome = typeof body.outcome === "string" ? body.outcome : "";
   if (!username) return json(res, 400, { error: "username required" });
@@ -132,10 +140,53 @@ async function markReply(req, res) {
   });
 }
 
+async function clearSelf(res, body) {
+  const { username } = body;
+  if (!username) return json(res, 400, { error: "username required" });
+
+  const events = parseRows(await kv("LRANGE", trackKey(username), "0", "-1").catch(() => null));
+  // Same tracked-send guard as markReply: without a sent event there is
+  // nothing whose noise could be cleared.
+  const sent = events.find((e) => e.kind === "sent");
+  if (!sent) {
+    return json(res, 404, { error: `${username} has no tracked send — nothing to clear` });
+  }
+
+  // Drop fetch-attributable events only (the reviewer's own Sent-folder
+  // opens and test clicks); the sent baseline and deliberate reply marks
+  // survive. Rewrite the list in place, same shape as markReply's replace.
+  const survivors = events.filter((e) => e.kind !== "open" && e.kind !== "click");
+  const removed = events.length - survivors.length;
+  if (!removed) return json(res, 200, { ok: true, username, removed: 0 }); // idempotent
+
+  const cmds = [["DEL", trackKey(username)]];
+  for (let i = survivors.length - 1; i >= 0; i--) {
+    cmds.push(["LPUSH", trackKey(username), JSON.stringify(survivors[i])]);
+  }
+  cmds.push(["LTRIM", trackKey(username), "0", String(TRK_LIST_CAP - 1)]);
+  await kvPipeline(cmds).catch(() => {});
+
+  return json(res, 200, { ok: true, username, removed });
+}
+
 export default async function handler(req, res) {
   if (!requireToken(req, res)) return;
-  if (req.method === "POST") return markReply(req, res);
-  if (req.method !== "GET") return json(res, 405, { error: "GET or POST only" });
+  if (req.method !== "POST" && req.method !== "GET") {
+    return json(res, 405, { error: "GET or POST only" });
+  }
+  if (req.method === "POST") {
+    // The request body is readable once — peek at it here and hand the shape
+    // to the right action (clearSelf:true needs no outcome; anything else is
+    // a reply mark, which validates its own outcome below).
+    let body = {};
+    try {
+      body = await readBody(req);
+    } catch {
+      body = {};
+    }
+    if (body.clearSelf === true) return clearSelf(res, body);
+    return markReply(res, body);
+  }
 
   const users = await kv("SMEMBERS", Q_TRK_USERS).catch(() => null);
   const list = Array.isArray(users) ? users : [];

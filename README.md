@@ -179,7 +179,7 @@ prior-decision (le `tk` est relu dans le corps de la décision).
 | `GET /api/pix?tk=…` | **aucune** | pixel d'ouverture : 200 `image/gif` 42 octets toujours (tk mort inclus) + événement `open` si le tk est connu |
 | `GET /api/r?tk=…` | **aucune** | clic : 302 vers le site toujours (tk mort inclus) + événement `click` si connu |
 | `GET /api/kpi` | token | agrège opens/clics/réponses par prospect + totaux (voir l'onglet) |
-| `POST /api/kpi` | token | marque une réponse `{username, outcome: positive\|neutral\|negative\|bounce}` — **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque |
+| `POST /api/kpi` | token | **deux actions** — réponse : `{username, outcome: positive\|neutral\|negative\|bounce}` en **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque. Auto-test : `{username, clearSelf: true}` (voir « C'était moi » ci-dessous) |
 
 Le marquage de réponse est un `POST` sur `/api/kpi` (et non une route séparée)
 parce que le plan Hobby plafonne les fonctions serverless à 12 par
@@ -193,6 +193,16 @@ fusionne dans un fichier existant ; la route d'envoi immédiat `POST /api/decide
 et une ligne par prospect tracké avec le sélecteur de réponse. Les données
 commencent au déploiement : les envois d'avant (premier lot, console locale)
 n'ont pas de tracking.
+
+**« C'était moi »** — le pixel et le clic ne portent aucune identité (aucune
+IP/UA stockée, par conception) : impossible de distinguer une ouverture du
+prospect de celle du reviewer quand il vérifie l'email dans ses Envoyés Zoho
+ou clique le lien pour tester. Le bouton **« C'était moi »** de la ligne d'un
+prospect retire ses événements `open`/`click` des KPIs (`POST /api/kpi
+{username, clearSelf: true}`) — l'envoi reste compté, les réponses marquées
+restent, le fold est recalculé (totaux inclus). Nettoyage explicite : le
+reviewer sait ce qu'il a touché ; idempotent (rien à retirer → `removed: 0`),
+404 si le prospect n'a pas d'envoi tracké.
 
 **Limites honnêtes** : Gmail/Outlook préchargent les images via leurs proxys —
 une ouverture proxy n'est pas un humain, les chiffres d'ouverture sont
