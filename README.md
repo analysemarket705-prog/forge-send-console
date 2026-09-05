@@ -140,6 +140,69 @@ Les seuls réglages du dépôt GitHub :
 Les identifiants SMTP ne quittent jamais les Vercel secrets — le workflow
 n'en a pas besoin.
 
+## Suivi des emails (pixel + clic) et onglet KPIs
+
+Chaque email d'un lot verrouillé part **tracké** : au moment de l'envoi,
+`batchsend` tire un `tk` frais (`crypto.randomBytes(12)` → 24 hex) et
+construit le message final — c'est la seule mutation du texte gelé, après le
+lock :
+
+- le corps texte voit l'URL de signature réécrite mécaniquement :
+  `https://forgefitapp.co/` → `{trackBase}/api/r?tk=<tk>` — **ces octets-là
+  sont ce que SMTP envoie ET ce que la décision enregistre** (le md reste
+  fidèle à ce qui est parti) ;
+- une partie HTML miroir (texte échappé + pixel `{trackBase}/api/pix?tk=<tk>`
+  de 1×1) est jointe en `multipart/alternative` — le rendu visible est
+  identique, et un client qui charge les images ouvre le pixel.
+
+`trackBase` = l'env `FORGE_TRACK_BASE` (défaut `https://go.forgefitapp.co`).
+Réécriture et pixel vivent dans `_lib.js` (`rewriteText`/`htmlMirror`) ;
+l'agent writer local et le chemin terminal (`--send`, console locale) ne sont
+**pas** trackés.
+
+**Événements (KV — clés qui survivent au `--send-pull` par conception)** :
+`forge:tkmap:<tk>` = `{username, sentAt}` (TTL 90 j) ; `forge:trk:<username>`
+= historique `{kind: sent|open|click|reply, tk, at, outcome?}` (100 max) ;
+`forge:trkusers` = les prospects trackés. Le `sent` est écrit dans le **même**
+pipeline que la décision (la décision en dernier — si elle existe, le
+tracking existe). **Jamais d'IP ni d'User-Agent stockés.** Un crash entre le
+SMTP et le pipeline est réparé par le heal idempotent du chemin
+prior-decision (le `tk` est relu dans le corps de la décision).
+
+**Endpoints** :
+
+| Endpoint | Auth | Rôle |
+|---|---|---|
+| `GET /api/pix?tk=…` | **aucune** | pixel d'ouverture : 200 `image/gif` 42 octets toujours (tk mort inclus) + événement `open` si le tk est connu |
+| `GET /api/r?tk=…` | **aucune** | clic : 302 vers le site toujours (tk mort inclus) + événement `click` si connu |
+| `GET /api/kpi` | token | agrège opens/clics/réponses par prospect + totaux (voir l'onglet) |
+| `POST /api/reply` | token | marque une réponse `{username, outcome: positive\|neutral\|negative\|bounce}` — **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque |
+
+**Onglet KPIs** (header de la console) : totaux (envoyés, ouverts — comptés
+« ≥ 1 ouverture + délai de première ouverture » —, clics, réponses par issue)
+et une ligne par prospect tracké avec le sélecteur de réponse. Les données
+commencent au déploiement : les envois d'avant (premier lot, console locale)
+n'ont pas de tracking.
+
+**Limites honnêtes** : Gmail/Outlook préchargent les images via leurs proxys —
+une ouverture proxy n'est pas un humain, les chiffres d'ouverture sont
+approximatifs (le clic, lui, n'a pas ce problème) ; un client qui ne rend que
+le texte ne charge jamais le pixel (rare — la partie HTML gagne dans les
+clients modernes).
+
+### Le domaine `go.forgefitapp.co`
+
+Le tracking a besoin d'un domaine dédié (un lien de clic raccourci propre) :
+
+```bash
+# Dashboard Vercel -> projet forge-send-console -> Settings -> Domains -> add
+# go.forgefitapp.co -> instruction DNS fournie (CNAME go -> cname.vercel-dns.com)
+# à poser chez le provider DNS de forgefitapp.co. Apex vérifié du projet : le
+# déploiement des endpoints n'exige PAS le domaine (fallback : les liens
+# pointent vers l'origin .vercel.app tant que le CNAME n'est pas posé — plus
+# laid, mais fonctionnel).
+```
+
 ## Déploiement
 
 ### 1. Projet Vercel + KV Upstash
@@ -169,6 +232,7 @@ note `UPSTASH_REDIS_REST_URL` et `UPSTASH_REDIS_REST_TOKEN`.
 | `FORGE_KV_REST_TOKEN` | le token REST du KV Upstash |
 | `FORGE_CONSOLE_TOKEN` | `<à générer>` — **identique** au secret GitHub et au `FORGE_CONSOLE_TOKEN` du `.env` local ; le navigateur le demande une fois |
 | `DEEPSEEK_API_KEY` | la clé DeepSeek du `.env` local — nécessaire au bouton **Modifier** (`api/revise.js` appelle l'agent writer depuis le serveur). Sans elle : 500 « modifier cannot run ». Modèles/endpoint surchargeables via `FORGE_REVISE_MODEL` / `FORGE_REVISE_BASE` |
+| `FORGE_TRACK_BASE` | `https://go.forgefitapp.co` — l'origine des liens de tracking réécrits dans chaque email (pixel + clic). Surchargeable pour un test local ; sans elle, les liens pointent vers `go.forgefitapp.co` par défaut |
 
 Cocher **Production** (et Preview si tu veux tester sur les URLs de preview).
 Valeurs réelles du SMTP : uniquement dans les secrets Vercel + le `.env`
@@ -258,3 +322,16 @@ pull — puis remets l'adresse réelle.
   mot de passe SMTP ; la b64 du mockup est stockée au moment du push dans le
   KV et supprimée au pull (le pull refuse de vider la console tant que le
   lot n'a pas fini de livrer).
+- **`pix`/`r` volontairement publics, jamais de données personnelles** : un
+  client mail ne peut pas envoyer `x-forge-token`, donc l'auth de ces deux
+  endpoints est le `tk` lui-même — 24 hex aléatoires par envoi, inestimables
+  par un tiers (et morts au bout de 90 j). Aucune requête ne stocke d'IP ni
+  d'User-Agent ; un `tk` inconnu reçoit le même 200/302 qu'un bon (aucun
+  oracle). Seul `/api/kpi` et `/api/reply` sont sous token — les réponses ne
+  peuvent être marquées que par quelqu'un qui a le token console.
+- **Le md ≠ lien de tracking** : la réécriture mécanique (URL de signature →
+  tracker) n'est pas une édition humaine. Un envoi non modifié garde dans son
+  md le texte approuvé, sans lien console ; un envoi révisé voit sa section
+  draft synchronisée aux **octets envoyés** (lien tracker inclus) par le
+  pull. Les octets exacts de chaque envoi vivent aussi dans les événements KV
+  (`forge:trk:*`), qui survivent au pull.
