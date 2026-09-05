@@ -782,17 +782,27 @@ function rebuildCard(el, item, d) {
 function bindCard(el, item) {
   const u = item.username || "";
   const a = el.querySelector('[data-act="rej"]');
-  if (a) a.onclick = () => stage(u, "rejected");
+  if (a) a.onclick = () => onChoiceClick(u, "rejected");
   const ed = el.querySelector('[data-act="edit"]');
   if (ed) ed.onclick = () => reviseModal(item);
   const ap = el.querySelector('[data-act="appr"]');
-  if (ap) ap.onclick = () => stage(u, "approved");
+  if (ap) ap.onclick = () => onChoiceClick(u, "approved");
+  // a stage POST is in flight for this user — keep the buttons inert until it
   // a stage POST is in flight for this user — keep the buttons inert until it
   // lands; only buttons WE disable get flagged, so stage()'s release pass can
   // never lift a markup-level disabled state (e.g. edit-on-a-marked-card)
   if (busyUsers.has(u))
     for (const b of el.querySelectorAll(".actions .btn"))
       if (!b.disabled) { b.disabled = true; b.dataset.busyWait = "1"; }
+}
+
+/* Clicking the button of the choice a card ALREADY carries means "retirer"
+   (that is what its label promises) — re-staging the same choice would be a
+   server no-op (stage.js only replaces or removes), so the click sends
+   choice null, the server's own deselection protocol. */
+function onChoiceClick(u, choice) {
+  const cur = (state.staged || []).find((s) => s.username === u);
+  stage(u, cur && cur.choice === choice ? null : choice);
 }
 
 function actionsHtml(item, u, stagedMark) {
