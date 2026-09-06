@@ -234,7 +234,7 @@ SMTP*).
 | `GET /api/pix?tk=…` | **aucune** | pixel d'ouverture : 200 `image/gif` 42 octets toujours (tk mort inclus) + événement `open` si le tk est connu |
 | `GET /api/r?tk=…` | **aucune** | clic : 302 vers le site toujours (tk mort inclus) + événement `click` si connu |
 | `GET /api/kpi` | token | agrège opens/clics/réponses par prospect + totaux (voir l'onglet) |
-| `POST /api/kpi` | token | **deux actions** — réponse : `{username, outcome: positive\|neutral\|negative\|bounce}` en **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque. Auto-test : `{username, clearSelf: true}` (voir « C'était moi » ci-dessous) |
+| `POST /api/kpi` | token | **trois actions** — réponse : `{username, outcome: positive\|neutral\|negative\|bounce}` en **sémantique de remplacement** (re-marquer ne double jamais) ; `outcome` vide **retire** la marque. Auto-test : `{username, clearSelf: true}` (voir « C'était moi » ci-dessous) et `{testWindow: true\|false}` (voir « 🧪 Je teste » ci-dessous) |
 
 Le marquage de réponse est un `POST` sur `/api/kpi` (et non une route séparée)
 parce que le plan Hobby plafonne les fonctions serverless à 12 par
@@ -271,11 +271,33 @@ restent, le fold est recalculé (totaux inclus). Nettoyage explicite : le
 reviewer sait ce qu'il a touché ; idempotent (rien à retirer → `removed: 0`),
 404 si le prospect n'a pas d'envoi tracké.
 
+**« 🧪 Je teste »** — la fenêtre de test armée dans l'onglet KPIs (`POST
+/api/kpi {testWindow: true}`) : pendant `SELFTEST_MS` (30 min, expiration
+automatique, re-arm = prolongation), pix/r taggent chaque événement
+`{test: true}` et les folds les excluent — le compteur
+`testOpenEvents`/`testClicks` à côté de la barre prouve que le tracking
+fonctionne sans bouger un seul chiffre prospect. `false` désarme ; le GET
+renvoie `selftest.until` (null désarmé). À armer avant de vérifier un envoi
+depuis un endroit hors de tes pays ou un proxy qui échapperait au filtre pays.
+
+**Filtre pays d'origine** — en plus de la fenêtre, pix/r lisent l'en-tête
+Vercel `x-vercel-ip-country` (le **pays**, jamais l'IP — rien d'autre
+n'atteint le code) et **jettent l'événement à la source** quand il fait
+partie des pays du reviewer : `FORGE_SELF_COUNTRIES` (env Vercel, défaut
+`SN,ES,FR`). L'endpoint répond quand même (200-gif / 302) — seul
+l'enregistrement saute, avant toute lecture KV. Tes vérifications depuis le
+mobile et la boîte Zoho (Sénégal/Espagne/France) ne laissent donc aucune
+trace et ne bougent aucun KPI, sans action de ta part. Faux négatifs
+assumés : un vrai prospect situé dans un de ces pays est invisible à vie —
+change `FORGE_SELF_COUNTRIES` si tu te déplaces (roaming/VPN hors zone n'est
+pas filtré : arme la fenêtre à la place).
+
 **Limites honnêtes** : Gmail/Outlook préchargent les images via leurs proxys —
 une ouverture proxy n'est pas un humain, les chiffres d'ouverture sont
 approximatifs (le clic, lui, n'a pas ce problème) ; un client qui ne rend que
 le texte ne charge jamais le pixel (rare — la partie HTML gagne dans les
-clients modernes).
+clients modernes) ; le filtre pays ne couvre que tes 3 pays (voir
+ci-dessus).
 
 ### Le domaine `go.forgefitapp.co`
 
@@ -321,6 +343,7 @@ note `UPSTASH_REDIS_REST_URL` et `UPSTASH_REDIS_REST_TOKEN`.
 | `DEEPSEEK_API_KEY` | la clé DeepSeek du `.env` local — nécessaire au bouton **Modifier** (`api/revise.js` appelle l'agent writer depuis le serveur). Sans elle : 500 « modifier cannot run ». Modèles/endpoint surchargeables via `FORGE_REVISE_MODEL` / `FORGE_REVISE_BASE` |
 | `FORGE_TRACK_BASE` | `https://go.forgefitapp.co` — l'origine des liens de tracking réécrits dans chaque email (pixel + clic). Surchargeable pour un test local ; sans elle, les liens pointent vers `go.forgefitapp.co` par défaut |
 | `FORGE_BATCH_MAX_TRIES` | (optionnel, défaut `3`) — essais SMTP maximum par item avant dead-letter `failed`. Plus bas = lot plus réactif ; plus haut = plus tolérant aux pannes SMTP brèves |
+| `FORGE_SELF_COUNTRIES` | (optionnel, défaut `SN,ES,FR`) — pays du reviewer dont les fetchs pixel/clic sont **jetés à la source** (jamais enregistrés). Liste séparée par des virgules, codes ISO 3166-1 alpha-2 |
 
 Cocher **Production** (et Preview si tu veux tester sur les URLs de preview).
 Valeurs réelles du SMTP : uniquement dans les secrets Vercel + le `.env`

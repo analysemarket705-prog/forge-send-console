@@ -238,6 +238,7 @@
 
     <div id="kpis" style="display:none;">
       <div class="summary" id="kpiSummary"></div>
+      <div id="kpiTest" style="margin:0 0 8px;"></div>
       <p class="hint" id="kpiHint"></p>
       <div id="kpiWrap"></div>
     </div>
@@ -1076,6 +1077,7 @@ function rcHtml(outcome) {
 function kpiFp(k) {
   return JSON.stringify([
     k.totals,
+    (k.selftest && k.selftest.until) || null,
     k.rows.map((r) => [r.username, r.sentAt, r.opened, r.openEvents, r.clicks,
                        r.firstOpenDelaySec, (r.replies || []).map((x) => [x.outcome, x.at])]),
   ]);
@@ -1131,13 +1133,57 @@ function kpiRow(r) {
   </tr>`;
 }
 
+function kpiTestBar(st, t) {
+  const wrap = $("kpiTest");
+  if (st && st.until) {
+    const tagged = (t && (t.testOpenEvents || t.testClicks)) || null;
+    wrap.innerHTML =
+      `<span class="chip" style="padding:6px 10px;">🧪 Fenêtre <b>« je teste »</b> active jusqu'à <b>${esc(hhmm(st.until))}</b> — ` +
+      `pendant ce temps vos ouvertures/clics sont <b>marqués « test » et exclus des KPIs</b>` +
+      (tagged
+        ? ` (déjà ${t.testOpenEvents} ouv. / ${t.testClicks} clic${t.testClicks > 1 ? "s" : ""} taggés — le tracking fonctionne)`
+        : " (aucun event encore — ouvrez ou cliquez depuis votre mobile)") +
+      ` <button class="btn ghost2" id="kpiDisarm" style="padding:3px 10px;margin-left:8px;">Désarmer</button></span>`;
+    $("kpiDisarm").onclick = async () => {
+      $("kpiDisarm").disabled = true;
+      try {
+        await api("/api/kpi", { testWindow: false });
+        toast("Fenêtre test désarmée — vos événements comptent à nouveau", "ok");
+        await loadKpis();
+      } catch (e) {
+        toast(e.message, "err");
+        $("kpiDisarm").disabled = false;
+      }
+    };
+    return;
+  }
+  wrap.innerHTML =
+    `<button class="btn ghost2" id="kpiArm" style="padding:4px 10px;" title="Avant de vérifier un envoi depuis votre mobile/boîte mail (ouverture dans vos Envoyés, clic de test), armez la fenêtre : pendant 30 min, ces ouvertures/clics sont marqués « test » et n'apparaissent pas dans les KPIs.">🧪 Je teste — 30 min</button>`;
+  $("kpiArm").onclick = async () => {
+    $("kpiArm").disabled = true;
+    try {
+      const r = await api("/api/kpi", { testWindow: true });
+      toast(r.until
+        ? `Fenêtre test armée jusqu'à ${hhmm(r.until)} — vos vérifications seront exclues des KPIs`
+        : "Fenêtre test armée", "ok");
+      await loadKpis();
+    } catch (e) {
+      toast(e.message, "err");
+      $("kpiArm").disabled = false;
+    }
+  };
+}
+
 function renderKpis(data) {
   const t = data.totals;
   const wrap = $("kpiWrap");
+  kpiTestBar(data.selftest, t);
   $("kpiHint").innerHTML =
     `Ouvertures mesurées par <b>pixel</b> dans chaque email de lot (Gmail/Outlook préchargent les images via leurs serveurs — compter comme « au moins une ouverture + délai de la première »). ` +
     `Clics = lien de la signature suivi. Réponses = <b>marquées à la main</b> ici depuis la boîte Zoho (semi-manuel : Zoho gratuit n'a pas d'IMAP). ` +
-    `Le pixel ne peut pas vous distinguer du prospect (aucune IP stockée) : si vous ouvrez un email dans vos Envoyés ou cliquez le lien pour tester, le bouton <b>« C'était moi »</b> de la ligne retire ces ouvertures/clics.`;
+    `Vos pays (<b>FR / ES / SN</b>) sont <b>ignorés à la source</b> : un événement venant de là n'est jamais enregistré, sans rien faire. ` +
+    `Le pixel ne peut pas vous distinguer du prospect ailleurs (aucune IP stockée) : avant de vérifier un envoi depuis un autre endroit, armez <b>« 🧪 Je teste »</b> — ` +
+    `vos ouvertures/clics seront étiquetés « test » et exclus des KPIs pendant 30 min. Pour un nettoyage rétrospectif, <b>« C'était moi »</b> sur la ligne retire les ouvertures/clics déjà comptés.`;
   if (!t.sent) {
     $("kpiSummary").innerHTML = "";
     wrap.innerHTML = `<div class="empty"><div class="big">📈</div>Aucun envoi suivi pour l'instant.<br>` +

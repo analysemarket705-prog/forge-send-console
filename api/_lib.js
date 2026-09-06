@@ -41,6 +41,39 @@ export const TRK_LIST_CAP = 100;        // LTRIM bound per prospect
 export const TRK_MAP_TTL_S = 7776000;   // tk map TTL: 90 days — any reply lands well before that
 export const OUTCOMES = ["positive", "neutral", "negative", "bounce"];
 
+// Reviewer self-test window ("je teste"): the KPI tab arms forge:selftest
+// {until} for SELFTEST_MS; while armed, pix/r tag every recorded event
+// {test:true} and the KPI folds exclude those events, so the reviewer's own
+// Sent-folder opens and test clicks never move the KPIs. No IP/UA involved:
+// the window is the identity (deliberately armed, short, auto-expiring).
+export const Q_SELFTEST = "forge:selftest";
+export const SELFTEST_MS = 30 * 60 * 1000;
+export async function selfTestArmed() {
+  const raw = await kv("GET", Q_SELFTEST).catch(() => null);
+  if (!raw) return false;
+  try {
+    const s = JSON.parse(raw);
+    return !!(s && s.until && new Date(s.until).getTime() > Date.now());
+  } catch {
+    return false;
+  }
+}
+
+// Reviewer home-country filter: pix/r DROP the event outright (never
+// recorded) when the request's country — read from Vercel's
+// x-vercel-ip-country header, so no IP ever reaches this code — is one of
+// FORGE_SELF_COUNTRIES (default SN,ES,FR = the reviewer's own locations).
+// This is a deliberate false-negative trade: a genuine prospect in those
+// countries is invisible too. The IP itself is never stored or logged.
+export function selfCountry(req) {
+  const allow = String(process.env.FORGE_SELF_COUNTRIES || "SN,ES,FR")
+    .split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (!allow.length) return null;
+  const c = String((req && req.headers && req.headers["x-vercel-ip-country"]) || "")
+    .toUpperCase().trim();
+  return allow.includes(c) ? c : null;
+}
+
 const TRACK_BASE_DEFAULT = "https://go.forgefitapp.co"; // CNAME -> the console project
 export function trackBase() {
   return (process.env.FORGE_TRACK_BASE || TRACK_BASE_DEFAULT).replace(/\/+$/, "");

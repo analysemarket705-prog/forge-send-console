@@ -1,9 +1,10 @@
-// GET  /api/kpi              ->  { totals, rows }
-// POST /api/kpi  — two reviewer actions, same route:
-//   { username, outcome }        ->  { ok, at, outcome, username, replies }
-//   { username, clearSelf: true }->  { ok, username, removed }
+// GET  /api/kpi              ->  { totals, selftest, rows }
+// POST /api/kpi  — three reviewer actions, same route:
+//   { username, outcome }            ->  { ok, at, outcome, username, replies }
+//   { username, clearSelf: true }    ->  { ok, username, removed }
+//   { testWindow: true | false }     ->  { ok, until }  (arm / disarm)
 //
-// One token-gated resource behind the KPI tab — two methods on the same
+// One token-gated resource behind the KPI tab — three methods on the same
 // route keep the serverless-function count under the Hobby cap (12 per
 // deployment; every file in api/ is one function, so new endpoints are
 // merged into existing files, not added).
@@ -11,22 +12,30 @@
 // GET folds the tracking events (forge:trkusers set + forge:trk:<u> lists)
 // into the numbers the tab shows. Events per prospect, newest first:
 //   {kind:"sent", tk, at}              — one per delivered batch email
-//   {kind:"open",  tk, at}             — one per pixel fetch (proxy-prone)
-//   {kind:"click", tk, at}             — one per tracked-link redirect
+//   {kind:"open",  tk, at, test?}      — one per pixel fetch (proxy-prone)
+//   {kind:"click", tk, at, test?}      — one per tracked-link redirect
 //   {kind:"reply", tk, at, outcome}    — set semi-manually via POST /api/kpi
+// Events tagged {test:true} were recorded while the reviewer's "je teste"
+// window was armed — they fold into totals.testOpen/testClicks only, never
+// into opened/openEvents/clicks/clickUsers (see Q_SELFTEST in _lib.js).
+// Fetches whose country is one of the reviewer's own (selfCountry in
+// _lib.js, default SN,ES,FR) never become events at all — dropped at the
+// source in pix/r, so there is no home-country noise left to fold.
 // Opened is folded as ">=1 open + first-open delay" (a proxy fetch is not a
 // human open, so counting fetches as reads would overstate); clicks count
 // events. Replies carry an outcome. Empty store -> all-zero totals, never
-// an error. Rows sorted by sentAt desc. This data lives in keys the console
-// clear never touches, so it survives the review lifecycle by design.
+// an error. Rows sorted by sentAt desc. selftest.until is the armed-window
+// deadline (null when none). This data lives in keys the console clear
+// never touches, so it survives the review lifecycle by design.
 //
 // POST is the reviewer's semi-manual bookkeeping (Zoho free has no IMAP —
-// the server cannot read the mailbox; the reviewer marks replies and cleans
-// self-tests in the KPI tab). The pixel/click endpoints carry no identity
-// (no IP/UA ever stored, by design) so the reviewer's OWN fetches — opening
-// the sent copy in Zoho's Sent folder to check it, test-clicking the link —
-// are indistinguishable from a prospect's at record time. Both POST shapes
-// keep this honest with explicit reviewer actions:
+// the server cannot read the mailbox; the reviewer marks replies, cleans
+// self-tests and arms the test window in the KPI tab). The pixel/click
+// endpoints carry no identity (no IP/UA ever stored, by design) so the
+// reviewer's OWN fetches — opening the sent copy in Zoho's Sent folder to
+// check it, test-clicking the link — are indistinguishable from a
+// prospect's at record time. The POST shapes keep this honest with explicit
+// reviewer actions:
 //   { username, outcome }         reply mark: positive / neutral / negative /
 //                                 bounce — or EMPTY, which removes the mark
 //                                 (a mis-click stays reversible). REPLACE
@@ -38,9 +47,16 @@
 //                                 reply marks survive — the row stays, only
 //                                 fetch-attributable noise goes. Idempotent:
 //                                 nothing to drop answers removed: 0.
+//   { testWindow: true }          "je teste": arms the window (SELFTEST_MS,
+//                                 30 min, auto-expiring). While armed, pix/r
+//                                 tag every open/click {test:true} — the
+//                                 reviewer's own mobile/mail checks never
+//                                 move the KPIs, and the tagged count proves
+//                                 the tracking still works. Re-arming
+//                                 extends. { testWindow: false } disarms.
 // 404 when the prospect has no tracked send (nothing to reply to / to clear).
 
-import { json, requireToken, readBody, kv, kvPipeline, Q_TRK_USERS, trackKey, trackEvt, OUTCOMES, TRK_LIST_CAP } from "./_lib.js";
+import { json, requireToken, readBody, kv, kvPipeline, Q_TRK_USERS, Q_SELFTEST, SELFTEST_MS, trackKey, trackEvt, OUTCOMES, TRK_LIST_CAP } from "./_lib.js";
 
 const OUTCOME_LABELS = { positive: "positive", neutral: "neutral", negative: "negative", bounce: "bounce" };
 
@@ -61,9 +77,14 @@ function parseRows(rawRows) {
 function fold(events) {
   // events are newest-first; walk them and keep the FIRST occurrence of each
   // "first" metric (i.e. the oldest open/click is the last matching element).
+  // test:true events (recorded during the reviewer's armed "je teste" window)
+  // count into testOpenEvents/testClicks only — the reviewer's own checks
+  // never touch the prospect-facing folds.
   let sentAt = null;
   let openEvents = 0;
   let clickEvents = 0;
+  let testOpenEvents = 0;
+  let testClicks = 0;
   let firstOpenAt = null;
   let firstClickAt = null;
   let lastSentTk = null;
@@ -73,17 +94,25 @@ function fold(events) {
       if (!sentAt) sentAt = e.at;
       if (!lastSentTk) lastSentTk = e.tk;
     } else if (e.kind === "open") {
-      openEvents += 1;
-      if (e.at) firstOpenAt = firstOpenAt === null ? e.at : minAt(firstOpenAt, e.at);
+      if (e.test) {
+        testOpenEvents += 1;
+      } else {
+        openEvents += 1;
+        if (e.at) firstOpenAt = firstOpenAt === null ? e.at : minAt(firstOpenAt, e.at);
+      }
     } else if (e.kind === "click") {
-      clickEvents += 1;
-      if (e.at) firstClickAt = firstClickAt === null ? e.at : minAt(firstClickAt, e.at);
+      if (e.test) {
+        testClicks += 1;
+      } else {
+        clickEvents += 1;
+        if (e.at) firstClickAt = firstClickAt === null ? e.at : minAt(firstClickAt, e.at);
+      }
     } else if (e.kind === "reply") {
       const outcome = OUTCOME_LABELS[e.outcome] ? e.outcome : "neutral";
       replies.push({ at: e.at, outcome });
     }
   }
-  return { sentAt, lastSentTk, openEvents, clickEvents, firstOpenAt, firstClickAt, replies };
+  return { sentAt, lastSentTk, openEvents, clickEvents, firstOpenAt, firstClickAt, replies, testOpenEvents, testClicks };
 }
 
 function minAt(a, b) {
@@ -140,6 +169,19 @@ async function markReply(res, body) {
   });
 }
 
+async function setTestWindow(res, armed) {
+  // "je teste": arm (or re-arm) the reviewer self-test window for SELFTEST_MS,
+  // or disarm it. While armed, pix/r tag every open/click {test:true} and the
+  // folds exclude them — the reviewer's own checks never move the KPIs.
+  if (armed) {
+    const until = new Date(Date.now() + SELFTEST_MS).toISOString();
+    await kv("SET", Q_SELFTEST, JSON.stringify({ until })).catch(() => {});
+    return json(res, 200, { ok: true, until });
+  }
+  await kv("DEL", Q_SELFTEST).catch(() => {});
+  return json(res, 200, { ok: true, until: null });
+}
+
 async function clearSelf(res, body) {
   const { username } = body;
   if (!username) return json(res, 400, { error: "username required" });
@@ -184,6 +226,7 @@ export default async function handler(req, res) {
     } catch {
       body = {};
     }
+    if (typeof body.testWindow === "boolean") return setTestWindow(res, body.testWindow);
     if (body.clearSelf === true) return clearSelf(res, body);
     return markReply(res, body);
   }
@@ -192,9 +235,15 @@ export default async function handler(req, res) {
   const list = Array.isArray(users) ? users : [];
 
   const rows = [];
+  let testOpenEvents = 0;
+  let testClicks = 0;
   for (const username of list) {
     const events = parseRows(await kv("LRANGE", trackKey(username), "0", "-1").catch(() => null));
     const f = fold(events);
+    // Test-window fold: reviewer-tagged events sum apart (proves the tracking
+    // works during a self-test without moving a single prospect-facing number).
+    testOpenEvents += f.testOpenEvents;
+    testClicks += f.testClicks;
     if (!f.sentAt) continue; // no sent event yet — never counted
     rows.push({
       username,
@@ -218,6 +267,8 @@ export default async function handler(req, res) {
     clicks: rows.reduce((s, r) => s + r.clicks, 0),
     clickUsers: rows.filter((r) => r.clicks > 0).length,
     replies: rows.reduce((s, r) => s + r.replies.length, 0),
+    testOpenEvents,
+    testClicks,
     byOutcome: {
       positive: rows.reduce((s, r) => s + r.replies.filter((x) => x.outcome === "positive").length, 0),
       neutral: rows.reduce((s, r) => s + r.replies.filter((x) => x.outcome === "neutral").length, 0),
@@ -226,5 +277,17 @@ export default async function handler(req, res) {
     },
   };
 
-  json(res, 200, { totals, rows });
+  // Armed self-test window (expired windows read as no window).
+  let testUntil = null;
+  const sRaw = await kv("GET", Q_SELFTEST).catch(() => null);
+  if (sRaw) {
+    try {
+      const s = JSON.parse(sRaw);
+      if (s && s.until && new Date(s.until).getTime() > Date.now()) testUntil = s.until;
+    } catch {
+      // a corrupt window never kills the tab
+    }
+  }
+
+  json(res, 200, { totals, selftest: { until: testUntil }, rows });
 }

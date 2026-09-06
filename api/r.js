@@ -8,14 +8,24 @@
 // broken link, and a redirect a client followed stays a redirect.
 //
 // no-store on the 302: a cached 3xx would collapse later clicks into one.
+// While the reviewer's "je teste" window is armed (see _lib.js Q_SELFTEST),
+// the event is tagged {test:true} — the KPI folds exclude it, so the
+// reviewer's own test clicks never move the KPIs.
+// On top of that, the home-country filter (selfCountry in _lib.js): a click
+// whose country is one of the reviewer's own (FORGE_SELF_COUNTRIES, default
+// SN,ES,FR — from Vercel's x-vercel-ip-country header) records NOTHING —
+// dropped at the source, never an event, no IP seen or stored. The 302 still
+// answers either way: the recipient must never see a broken link.
 
-import { json, kv, kvPipeline, qParam, tkMapKey, trackKey, trackEvt, SITE_URL, TRK_LIST_CAP } from "./_lib.js";
+import { json, kv, kvPipeline, qParam, tkMapKey, trackKey, trackEvt, selfTestArmed, selfCountry, SITE_URL, TRK_LIST_CAP } from "./_lib.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return json(res, 405, { error: "GET only" });
 
   const tk = qParam(req.url, "tk");
-  if (tk && /^[0-9a-f]{24}$/.test(tk)) {
+  // Home-country gate: a click from the reviewer's own countries (default
+  // SN,ES,FR) records nothing — the event is dropped before any KV work.
+  if (tk && !selfCountry(req) && /^[0-9a-f]{24}$/.test(tk)) {
     const mapRaw = await kv("GET", tkMapKey(tk)).catch(() => null);
     if (mapRaw) {
       let username = null;
@@ -27,8 +37,9 @@ export default async function handler(req, res) {
       }
       if (username) {
         const at = new Date().toISOString();
+        const extra = (await selfTestArmed()) ? { test: true } : undefined;
         await kvPipeline([
-          ["LPUSH", trackKey(username), trackEvt("click", tk, at)],
+          ["LPUSH", trackKey(username), trackEvt("click", tk, at, extra)],
           ["LTRIM", trackKey(username), "0", String(TRK_LIST_CAP - 1)],
         ]).catch(() => {});
       }

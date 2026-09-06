@@ -8,15 +8,24 @@
 //     in a mail client is at best noise and at worst triggers retries;
 //   - a known tk records one "open" event, best-effort (KV errors are
 //     swallowed — the pixel must never slow or break the client render).
+// While the reviewer's "je teste" window is armed (see _lib.js
+// Q_SELFTEST), the event is tagged {test:true} — the KPI folds exclude it,
+// so the reviewer's own Sent-folder opens never move the KPIs.
+// On top of that, the home-country filter (selfCountry in _lib.js): a pixel
+// fetch whose country is one of the reviewer's own (FORGE_SELF_COUNTRIES,
+// default SN,ES,FR — from Vercel's x-vercel-ip-country header) records
+// NOTHING — dropped at the source, never an event, no IP seen or stored.
 // Nothing else is stored: no IP, no User-Agent, no referrer.
 
-import { json, kv, kvPipeline, qParam, tkMapKey, trackKey, trackEvt, PIXEL_GIF, TRK_LIST_CAP } from "./_lib.js";
+import { json, kv, kvPipeline, qParam, tkMapKey, trackKey, trackEvt, selfTestArmed, selfCountry, PIXEL_GIF, TRK_LIST_CAP } from "./_lib.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return json(res, 405, { error: "GET only" });
 
   const tk = qParam(req.url, "tk");
-  if (tk && /^[0-9a-f]{24}$/.test(tk)) {
+  // Home-country gate: a fetch from the reviewer's own countries (default
+  // SN,ES,FR) records nothing — the event is dropped before any KV work.
+  if (tk && !selfCountry(req) && /^[0-9a-f]{24}$/.test(tk)) {
     const mapRaw = await kv("GET", tkMapKey(tk)).catch(() => null);
     if (mapRaw) {
       let username = null;
@@ -28,8 +37,9 @@ export default async function handler(req, res) {
       }
       if (username) {
         const at = new Date().toISOString();
+        const extra = (await selfTestArmed()) ? { test: true } : undefined;
         await kvPipeline([
-          ["LPUSH", trackKey(username), trackEvt("open", tk, at)],
+          ["LPUSH", trackKey(username), trackEvt("open", tk, at, extra)],
           ["LTRIM", trackKey(username), "0", String(TRK_LIST_CAP - 1)],
         ]).catch(() => {});
       }
