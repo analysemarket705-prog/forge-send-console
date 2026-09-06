@@ -116,9 +116,15 @@ Détails utiles :
   `ensure_house_rules` côté writer local. Une révision est marquée sur la
   carte (`✏️ modifié`) et gelée telle quelle dans le lot au verrouillage.
   Le SYSTEM du Modifier reflète aussi l'offre 30/70 du writer (`agents/
-  email_contact_writer.py` `FORGE_OFFER`) : gratuit au démarrage, Forge
-  prend 30 % des revenus de l'app, le créateur garde 70 % — si une
-  réécriture touche à l'argent, elle doit citer ces chiffres explicites.
+  email_contact_writer.py` `FORGE_OFFER`) : sans investissement initial (ni
+  frais mensuels, rien tant que l'app ne gagne rien), Forge prend 30 % des
+  revenus de l'app, le créateur garde 70 % — si une réécriture touche à
+  l'argent, elle doit citer ces chiffres explicites. Le SYSTEM interdit
+  aussi les statistiques (open rates push, revenus affiliés) et les claims
+  non étayées sur Instagram, l'email ou la plateforme actuelle du créateur,
+  proscrit le ton combatif envers cette plateforme, et impose la narration
+  partenariat (découverte Instagram → valeur pour les followers →
+  réputation → monétisation) quand l'instruction vise le récit.
   (Deux sources vivantes pour la même phrase d'offre — les garder synchro.)
 - La console terminale (`python run_forge_outreach.py --send`) reste
   disponible — c'est l'autre chemin d'envoi, avec confirmation par adresse
